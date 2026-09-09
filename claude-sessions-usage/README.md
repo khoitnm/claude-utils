@@ -5,7 +5,7 @@ Token usage and estimated cost reports built from the local Claude Code session 
 | File | Role |
 | --- | --- |
 | `claude-sessions-usage.py` | One row per session, for the current calendar month. |
-| `claude-session-analyze.py` | Ranked findings plus one row per assistant turn, for a single session. |
+| `claude-session-analyze.py` | Ranked findings for a single session, plus a per-turn ledger CSV. |
 | `claude_usage.py` | Shared cost rules. Not run directly. |
 | `session_insights.py` | Derived findings for one session. Not run directly. |
 
@@ -76,10 +76,14 @@ Python 3.6+, standard library only. The month report takes no arguments; the per
 takes the session UUID, which is the session's `.jsonl` filename and the first column of the
 month report.
 
-`claude-session-analyze.py` leads with ranked findings, then prints the same five priced token
-components for every turn, and ends with the same rate table and Enterprise handling as the
-month report. Its totals for a session are the same numbers that session's row shows in the
-month report.
+`claude-session-analyze.py` leads with ranked findings, then two shortlists - the steps worth
+fixing and the points the session could have been split at - and ends with the same rate table
+and Enterprise handling as the month report. Its totals for a session are the same numbers that
+session's row shows in the month report.
+
+The full per-turn ledger is not printed. It goes to a `_steps.csv` beside the report, because on
+a long session it is hundreds of rows to scroll past on the way to the conclusions, and it is the
+one part of the report a spreadsheet handles better than a fixed-width table.
 
 ## Findings
 
@@ -93,7 +97,7 @@ That figure is **carry cost**, and ranking by it is what turns the ledger into a
 
 ```
 1. [  $12.47] 74% of the bill ($12.47) was re-reading context, not doing work
-2. [   $4.79] Clearing the context at step 59 would have saved up to $4.79
+2. [   $4.01] Starting a fresh session at step 93 was worth $4.01
 3. [   $3.38] The static preamble cost $3.38 (20%) just by existing
 4. [   $3.38] The 6 costliest single additions account for $3.38
          step  20    $1.58  + 19,651 tok re-read 142x  prompt / system-prompt expansion
@@ -126,17 +130,65 @@ Sizing caveats, all stated in the report itself:
 - Context growth that matches no recorded block is reported as
   `prompt / system-prompt expansion` — your prompts, plus skills and tool schemas the harness
   expanded mid-session. It is a residual, not a measurement.
-- The reset saving is a **ceiling**: it assumes the work after the reset needed none of the
-  history it dropped, which is exactly the assumption a real `/clear` has to earn.
+- Split savings are net of re-reading the files the later work went back to, but files are the
+  only dependency a transcript records. Reasoning carried in the conversation leaves no trace,
+  so a split with no reach-back is the strongest claim the transcript supports, not a guarantee.
+  Where a session has no prompt boundary to split on, the report falls back to the old
+  `/clear`-anywhere figure and labels it a ceiling.
 
 The report footer states how closely the attribution reconciles against what was actually
 billed for prompt tokens — across all 324 local sessions this lands within a percent or two,
 with a worst case around 12%. The residual is cache-boundary rounding: prefix growth and
 billed cache writes do not line up token for token.
 
-In the per-step table, `(!)` now flags a step that added 4,000+ tokens the rest of the session
-had to re-read. It used to flag any turn reading more than 100,000 cached tokens, which on a
-long session fired on nearly every row — a warning that is always on carries no information.
+## Splitting a session, priced
+
+"Clearing the context here would have saved $X" is easy to compute and impossible to act on,
+because the saving assumes the work afterwards needed none of the history it dropped. The report
+tests that assumption instead of asserting it.
+
+Files are the one dependency a transcript records unambiguously: if a turn opens a file an
+earlier turn already opened, the work has demonstrably come back to earlier ground. From that,
+two things fall out.
+
+**A `reach_back` column on every step** — the earliest step this one re-opened a file from.
+A run of steps with no reach-back is a phase that stands alone; `reach_back` jumping back 60
+steps is work that still depends on history from there.
+
+**A priced split table.** Every turn that answers a new human prompt is a place the session
+could have been split (splitting anywhere else would cut a turn off from the tool output it was
+reacting to). Each one is costed both ways — what dropping the history saves, less what
+re-reading the files the later work went back to would cost:
+
+```
+Step |      Net |    Saves | Drops Tok | Puts Back |  Files Revisited | The Prompt It Answers
+  93 |  $4.0089 |  $4.1855 |   130,859 |   $0.1766 |  12 / ~3,924 tok | /handle-pr-review-comments
+ 136 |  $1.9354 |  $1.9707 |   175,206 |   $0.0353 |  10 / ~1,501 tok | yes, create another branch from this..
+  21 |  $0.9493 |  $0.9493 |    18,928 |   $0.0000 |       0 / ~0 tok | /create-jira-and-implement-auto-mode
+```
+
+Reaching back does not rule a split out; it just has to be paid for. Re-reading twelve files
+cost $0.18 against $4.19 of carrying, which is the shape of nearly every row: **a split is
+cheap even when the next phase needs some of the same ground.**
+
+## What to change, per step
+
+The printed shortlist tags each step with the cheapest thing that would have changed its cost,
+ranked by carry cost rather than by size. The same tag is the `lever` column in the CSV:
+
+| Lever | Meaning |
+| --- | --- |
+| `SPLIT` | a new phase starts here and dropping the history before it beats re-reading |
+| `CACHE` | an idle gap expired the prompt cache, re-writing the whole prefix at write rates |
+| `WASTE` | an errored, interrupted or rejected call, which stays in the context regardless |
+| `RE-READ` | a file already in the context was opened again |
+| `NARROW` | a large tool result: `offset`/`limit` on Read, a tighter Grep, `head` on Bash output |
+| `INJECT` | harness-injected text — memory files, hook output, tool schemas |
+| `SCHEMA` | a prompt or a mid-session skill/tool-schema expansion, which never leaves again |
+| `PROSE` | a long response, re-read by every later turn |
+
+An untagged step is one that simply did its work. Steps under 1,000 tokens of growth are left
+untagged whatever caused them.
 
 ## Report files
 
@@ -145,9 +197,16 @@ Every run prints to the console *and* saves the identical text to its own folder
 
 ```
 reports/
-  2026-09-08_21-11-36_session-analyze/session-analyze_8e3367d8-93f6-4169-8010-a1c339f56528.txt
+  2026-09-08_21-11-36_session-analyze/session-analyze_8e3367d8-....txt
+  2026-09-08_21-11-36_session-analyze/session-analyze_8e3367d8-..._steps.csv
   2026-09-08_21-11-37_sessions-usage/sessions-usage.txt
 ```
+
+The `_steps.csv` is the per-turn ledger: one row per assistant turn, 22 columns, values raw
+rather than formatted so it can be sorted and filtered. `context`/`growth` are what the turn
+carried and how much was new, `added`/`reread_by` what it handed forward and how many turns then
+re-read it, `cost`/`carry_cost` what it was billed against what its addition cost in total, and
+`lever`/`reach_back` the two derived columns described above.
 
 A run never overwrites an earlier one, so two reports can be diffed against each other. Two
 runs starting inside the same second get a `-2`, `-3` suffix. The console output ends with a

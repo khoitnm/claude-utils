@@ -10,6 +10,7 @@ Python 3.6+, standard library only.
 """
 
 import contextlib
+import csv
 import json
 import os
 import re
@@ -331,12 +332,22 @@ class Turn(object):
     that is what they cost: whatever a turn drags into the context is paid for
     on the turn after it and every turn beyond. Populated only under
     with_details=True.
+
+    `starts_prompt` marks a turn that answers a fresh human prompt rather than
+    continuing the previous one, and `prompt` holds that prompt's text. It is
+    the only place a session can be split without cutting a turn off from the
+    tool call it was reacting to, so every "should this have been a new
+    session" question is asked at these turns. `user_context` is not the same
+    thing: it is whatever text came last, harness records included. Both are
+    populated only under with_details=True.
     """
 
     __slots__ = ("model", "usage", "blocks", "user_context", "timestamp",
-                 "skill", "tool_results", "attachments", "duration_ms")
+                 "skill", "tool_results", "attachments", "duration_ms",
+                 "starts_prompt", "prompt")
 
-    def __init__(self, model, usage, user_context, timestamp=None, skill=None):
+    def __init__(self, model, usage, user_context, timestamp=None, skill=None,
+                 starts_prompt=False, prompt=""):
         self.model = model
         self.usage = usage
         self.blocks = []
@@ -346,6 +357,8 @@ class Turn(object):
         self.tool_results = []
         self.attachments = []
         self.duration_ms = None
+        self.starts_prompt = starts_prompt
+        self.prompt = prompt
 
     @property
     def tool_uses(self):
@@ -429,6 +442,8 @@ def read_session(path, with_blocks=False, with_details=False):
     last_user_context = "Initializing..."
     tool_names = {}         # tool_use id -> tool name, filled as calls are seen
     current = None          # the turn whose aftermath we are collecting
+    pending_prompt = True   # a human prompt is waiting for its first response
+    pending_text = ""       # and this is what it said
 
     for record in iter_records(path):
         timestamp = record.get("timestamp", "")
@@ -449,8 +464,9 @@ def read_session(path, with_blocks=False, with_details=False):
                 last_user_context = text
                 if session.summary == NO_SUMMARY:
                     session.summary = text
-            if with_details:
-                _absorb_user_record(session, record, current, tool_names, bool(text))
+            if with_details and _absorb_user_record(
+                    session, record, current, tool_names, text):
+                pending_prompt, pending_text = True, text
         elif session.summary == NO_SUMMARY and "summary" in record:
             session.summary = str(record.get("summary"))
 
@@ -480,7 +496,10 @@ def read_session(path, with_blocks=False, with_details=False):
             model = record.get("model") or message.get("model") or MODEL_FALLBACK
             turn = Turn(model, usage, last_user_context,
                         timestamp=record.get("timestamp"),
-                        skill=record.get("attributionSkill"))
+                        skill=record.get("attributionSkill"),
+                        starts_prompt=pending_prompt,
+                        prompt=pending_text)
+            pending_prompt, pending_text = False, ""
             session.turns.append(turn)
             if message_id:
                 by_message_id[message_id] = turn
@@ -497,20 +516,38 @@ def read_session(path, with_blocks=False, with_details=False):
     return session
 
 
-def _absorb_user_record(session, record, current, tool_names, has_text):
+# User records the harness writes in the user's voice: a notification that a
+# background task finished, an injected reminder, the output of a local
+# command. They resume a session without anyone steering it, so they are
+# neither prompts nor places the session could have been split. A slash
+# command (<command-message>) is the opposite case and does count - the user
+# typed it.
+HARNESS_PROMPT = re.compile(r"^<(task-notification|system-reminder|local-command-)")
+
+
+def _is_human_prompt(record, text):
+    """Whether a user record is a person steering, rather than the harness."""
+    if not text or record.get("isMeta") or record.get("interruptedMessageId"):
+        return False
+    return not HARNESS_PROMPT.match(text)
+
+
+def _absorb_user_record(session, record, current, tool_names, text):
     """Fold a user record's tool results into the turn that triggered them.
 
     A user record is either a real human prompt or the harness returning tool
     output; only the former counts as steering, and only the latter is a
-    context cost the preceding turn caused.
+    context cost the preceding turn caused. Returns True when the record was a
+    human prompt, so the caller can mark the turn that answers it.
     """
     blocks = iter_content_blocks(record)
     results = [b for b in blocks if b.get("type") == "tool_result"]
 
     if not results:
-        if has_text and not record.get("isMeta"):
+        if _is_human_prompt(record, text):
             session.prompts += 1
-        return
+            return True
+        return False
 
     denial = record.get("toolDenialKind")
     detail = record.get("toolUseResult")
@@ -530,6 +567,8 @@ def _absorb_user_record(session, record, current, tool_names, has_text):
             session.denials.append(result)
         if current is not None:
             current.tool_results.append(result)
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +749,27 @@ def render_table(headers, rows, right_align=()):
     return lines
 
 
+def write_csv(path, headers, rows):
+    """Write one table to a CSV beside a report, or None if it cannot be saved.
+
+    Data, not layout: values go out unformatted - no thousands separators, no
+    dollar signs, no truncation - because the point of the CSV is that a
+    spreadsheet or pandas can sort and filter it. The fixed-width tables in the
+    reports are the formatted view of the same numbers.
+    """
+    if not path:
+        return None
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(headers)
+            writer.writerows(rows)
+    except OSError as exc:
+        print("Not saving {}: {}".format(os.path.basename(path), exc), file=sys.stderr)
+        return None
+    return path
+
+
 def build_rates_table(rates_used, enterprise_discount):
     """Render the pricing rows that actually produced a report's costs."""
     headers = ["Model (rate row)"]
@@ -855,8 +915,22 @@ def report_to_file(slug, filename):
             shutil.rmtree(run_dir, ignore_errors=True)
 
 
-def announce_report(path):
+def side_file(report_path, filename):
+    """Path to a data file in the same run folder as a saved report.
+
+    None when nothing was saved, so a run whose report folder could not be
+    created still prints to the console instead of failing on the extra file.
+    """
+    if not report_path:
+        return None
+    return os.path.join(os.path.dirname(report_path), filename)
+
+
+def announce_report(path, *extras):
     """Tell the console where the run was saved. Console only: printed after
     the tee is torn down, so the report does not end with a note about itself."""
     if path and os.path.exists(path):
         print("Report saved to: {}".format(path))
+    for extra in extras:
+        if extra and os.path.exists(extra):
+            print("                 {}".format(extra))

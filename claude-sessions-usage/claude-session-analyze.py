@@ -10,6 +10,13 @@ The report leads with ranked findings because the per-step table alone cannot
 answer the question it invites. A table prices a turn by what it spent when it
 ran; the findings price it by what it added to the context and how many turns
 then had to re-read it, which is where a long session's money actually goes.
+
+The full per-turn ledger is written to a CSV beside the report rather than
+printed. On a long session it is hundreds of rows a reader scrolls past to
+reach the conclusions, and it is the one part of the report a spreadsheet
+handles better than a fixed-width table. What stays on the page is the part a
+reader can act on: the steps worth fixing, and the points the session could
+have been split at.
 """
 
 import sys
@@ -24,10 +31,9 @@ PATH_TOOLS = ("Read", "View", "Write", "Edit", "Grep", "Glob")
 ACTION_MAX_LEN = 74
 CAUSE_MAX_LEN = 62
 
-# A step that added more than this is called out in the table, replacing the
-# old absolute cache-read flag: on a long session that flag fired on nearly
-# every row, and a warning that is always on carries no information.
-SPIKE_TOKENS = 4_000
+# How many rows the printed shortlists carry before they stop being shortlists.
+FIX_ROWS = 15
+CUT_ROWS = 12
 
 
 def describe_action(turn):
@@ -130,9 +136,10 @@ def print_findings(insights):
     print("\n" + "-" * 100)
     print("Carry cost = tokens a step added x (one cache write + a cache read on every")
     print("remaining turn, up to the next compaction). Counts marked ~ are estimated")
-    print("from transcript text at {:.0f} chars per token; every figure in the ledger".format(
+    print("from transcript text at {:.0f} chars per token, and are the only estimated".format(
         si.CHARS_PER_TOKEN))
-    print("tables below is exact.")
+    print("numbers here; everything else, the ledger CSV included, is derived from")
+    print("billed token counts.")
     print("Attribution accounts for ${:,.2f} of the ${:,.2f} actually billed for prompt "
           "tokens ({:+.0f}%).".format(
               attributed, prompt_cost,
@@ -199,58 +206,157 @@ def print_skill_split(insights):
         print(line)
 
 
-def print_step_table(insights):
-    """The full per-step ledger, now carrying the two columns that explain it.
+def print_fix_list(insights):
+    """The steps worth changing, each tagged with the change that applies.
 
-    Every step is listed. The table is the audit trail for the findings, so
-    dropping rows from it would leave nothing to check them against.
+    Ranked by carry cost, because that is what a step actually cost the
+    session, and filtered to steps where something could have been done
+    differently: a row with no lever is a turn that simply did its work.
     """
+    tagged = [s for s in insights.steps if insights.levers.get(s.index)]
+    if not tagged:
+        return
+    ranked = sorted(tagged, key=lambda s: -s.carry_cost)[:FIX_ROWS]
+
     rows = []
-    for step in insights.steps:
-        tokens = step.priced.tokens
-        flag = " (!)" if step.caused >= SPIKE_TOKENS else ""
-        if step.rewrite_tokens >= si.REWRITE_TOKENS:
-            flag += " (CACHE RE-WRITE +${:,.2f})".format(step.rewrite_cost)
+    for step in ranked:
+        reach = insights.reaches[step.index - 1].earliest
         rows.append([
             str(step.index),
-            step.priced.label,
-            "{:,d}".format(step.context),
-            "{:+,d}".format(step.growth) if step.index > 1 else "base",
-            "{:,d}".format(tokens["cache_read"]),
-            "{:,d}".format(cu.cache_write_of(tokens)),
-            "{:,d}".format(tokens["input"]),
-            "{:,d}".format(tokens["output"]),
-            "${:,.4f}".format(step.priced.cost),
+            insights.levers[step.index],
             "${:,.4f}".format(step.carry_cost),
-            clip(step.cause, CAUSE_MAX_LEN) + flag,
-            clip(describe_action(step.turn), ACTION_MAX_LEN),
+            "+{:,d}".format(step.caused),
+            "{}x".format(step.remaining),
+            str(reach) if reach else "-",
+            clip(step.cause, CAUSE_MAX_LEN),
         ])
 
-    headers = ["Step", "Model", "Context", "Growth", "Cache Read", "Cache Write",
-               "Input", "Output", "Cost", "Carry", "Why Context Grew",
-               "Assistant Action / Response Detail"]
+    print("\nSteps Worth Fixing (ranked by carry cost, {} of {} tagged steps)".format(
+        len(rows), len(tagged)))
+    print("  Lever   = the cheapest thing that would have changed this step's cost")
+    print("  Added   = tokens this step handed to the rest of the session")
+    print("  Re-read = how many later turns then carried them")
+    print("  Reach   = earliest step this one re-opened a file from ('-' = new ground),")
+    print("            which is how far back the history it still needed reached")
+    for line in cu.render_table(
+            ["Step", "Lever", "Carry", "Added", "Re-read", "Reach",
+             "Why Context Grew"], rows, right_align=(0, 2, 3, 4, 5)):
+        print(line)
 
-    print("\nPer-Step Ledger")
-    print("  Context    = prompt tokens this turn carried")
-    print("  Growth     = change in context since the previous turn")
-    print("  Cost       = what this turn itself was billed")
-    print("  Carry      = total cost of what this turn added, across every later turn")
-    print("  (!)        = added {:,}+ tokens the rest of the session had to re-read".format(
-        SPIKE_TOKENS))
-    print("  CACHE RE-WRITE = billed a cache write far larger than the context grew,")
-    print("               meaning the prompt cache had expired and the whole prefix")
-    print("               was written again")
-    for line in cu.render_table(headers, rows,
-                                right_align=(0, 2, 3, 4, 5, 6, 7, 8, 9)):
+    used = [(tag, hint) for tag, hint in si.LEVER_HINTS
+            if any(row[1] == tag for row in rows)]
+    for tag, hint in used:
+        print("  {:<8} {}".format(tag, hint))
+
+
+def print_cut_points(insights):
+    """Where the session could have been split, priced against what that costs.
+
+    This is the table that settles what the reset ceiling can only raise. A
+    saving from dropping history is not free: whatever the later work went back
+    to has to be re-read into the new session and carried again. Both sides are
+    priced here, so the decision is a subtraction rather than a judgement.
+    """
+    if not insights.cuts:
+        return
+    ranked = sorted(insights.cuts, key=lambda c: -c.net)[:CUT_ROWS]
+
+    rows = [[
+        str(cut.index),
+        "${:,.4f}".format(cut.net),
+        "${:,.4f}".format(cut.savings),
+        "{:,d}".format(cut.dropped),
+        "${:,.4f}".format(cut.reentry_cost),
+        "{} / ~{:,} tok".format(cut.revisited, cut.reentry_tokens),
+        clip(cut.label, 46),
+    ] for cut in ranked]
+
+    worth = [c for c in insights.cuts if c.net > 0]
+    print("\nWhere The Session Could Have Been Split ({} of {} prompt boundaries"
+          " were worth taking)".format(len(worth), len(insights.cuts)))
+    print("  Only turns answering a new prompt are listed: splitting anywhere else")
+    print("  would cut a turn off from the tool output it was reacting to.")
+    print("  Saves     = what no longer carrying the history left behind is worth")
+    print("  Puts back = the files the later work went back to across the split, which")
+    print("              a new session has to re-read and then carry again")
+    print("  Net       = the first less the second, and the figure to act on. Files are")
+    print("              the only dependency a transcript records, so reasoning carried")
+    print("              in the conversation is not counted on either side, and a file")
+    print("              seen only inside a shell command has no size to put back.")
+    for line in cu.render_table(
+            ["Step", "Net", "Saves", "Drops Tok", "Puts Back", "Files Revisited",
+             "The Prompt It Answers"],
+            rows, right_align=(0, 1, 2, 3, 4, 5)):
         print(line)
 
 
-def analyze_session_totals(session_uuid):
+
+def step_ledger(insights):
+    """The full per-turn ledger as CSV headers and rows.
+
+    Unformatted on purpose - raw integers and floats, no truncation - so the
+    file can be sorted and filtered rather than read. The printed tables are
+    the formatted view of the same numbers.
+    """
+    headers = ["step", "model", "timestamp", "gap_seconds", "starts_prompt",
+               "skill", "lever", "context", "growth", "added", "reread_by",
+               "reach_back", "cache_read", "cache_write", "input", "output",
+               "cost", "carry_cost", "rewrite_tokens", "rewrite_cost",
+               "why_context_grew", "assistant_action"]
+    rows = []
+    for step in insights.steps:
+        tokens = step.priced.tokens
+        rows.append([
+            step.index,
+            step.priced.label,
+            step.turn.timestamp or "",
+            "" if step.gap_seconds is None else step.gap_seconds,
+            int(bool(step.turn.starts_prompt)),
+            step.turn.skill or "",
+            insights.levers.get(step.index, ""),
+            step.context,
+            step.growth,
+            step.caused,
+            step.remaining,
+            insights.reaches[step.index - 1].earliest or "",
+            tokens["cache_read"],
+            cu.cache_write_of(tokens),
+            tokens["input"],
+            tokens["output"],
+            round(step.priced.cost, 6),
+            round(step.carry_cost, 6),
+            step.rewrite_tokens,
+            round(step.rewrite_cost, 6),
+            step.cause,
+            describe_action(step.turn),
+        ])
+    return headers, rows
+
+
+def print_ledger_pointer(csv_path, rows):
+    """Where the ledger went, and what is in it."""
+    print("\nPer-Step Ledger")
+    if not csv_path:
+        print("  Not saved: the run has no report folder to write it into.")
+        return
+    print("  {:,} rows, one per assistant turn -> {}".format(
+        rows, Path(csv_path).name))
+    print("  context/growth      what this turn carried, and how much of it was new")
+    print("  added/reread_by     what it handed forward, and how many turns re-read it")
+    print("  cost/carry_cost     what the turn was billed, and what its addition cost")
+    print("                      in total across every later turn")
+    print("  reach_back          earliest step this turn re-opened a file from")
+    print("  lever               the cheapest thing that would have changed its cost")
+    print("  rewrite_tokens      cache write beyond what the context grew: an expired")
+    print("                      cache re-writing the whole prefix")
+
+
+def analyze_session_totals(session_uuid, report_path=None):
     target_file = find_transcript(session_uuid)
     if target_file is None:
         print("[ERROR] Session file for UUID '{}' not found under {}".format(
             session_uuid, cu.projects_dir()), file=sys.stderr)
-        return 1
+        return 1, None
 
     pricing, pricing_source = cu.load_pricing()
     enterprise_discount = cu.load_enterprise_discount()
@@ -258,7 +364,7 @@ def analyze_session_totals(session_uuid):
     session = cu.read_session(str(target_file), with_blocks=True, with_details=True)
     if not session.turns:
         print("[ERROR] No token usage found in {}".format(target_file), file=sys.stderr)
-        return 1
+        return 1, None
 
     insights = si.analyze(session, pricing)
 
@@ -270,7 +376,15 @@ def analyze_session_totals(session_uuid):
     print_cost_split(insights)
     print_growth_split(insights)
     print_skill_split(insights)
-    print_step_table(insights)
+    print_fix_list(insights)
+    print_cut_points(insights)
+
+    headers, rows = step_ledger(insights)
+    csv_path = cu.write_csv(
+        cu.side_file(report_path, "{}_steps.csv".format(
+            Path(report_path).stem if report_path else "session")),
+        headers, rows)
+    print_ledger_pointer(csv_path, len(rows))
 
     tally = insights.tally
     print("\nAggregated Totals Across {} Logical Steps:".format(tally.turns))
@@ -289,7 +403,7 @@ def analyze_session_totals(session_uuid):
 
     cu.print_enterprise_footnote(enterprise_discount)
     print()
-    return 0
+    return 0, csv_path
 
 
 if __name__ == "__main__":
@@ -303,7 +417,7 @@ if __name__ == "__main__":
     filename = "session-analyze_{}.txt".format(cu.safe_name_part(session_uuid))
 
     with cu.report_to_file("session-analyze", filename) as report_path:
-        status = analyze_session_totals(session_uuid)
+        status, ledger_path = analyze_session_totals(session_uuid, report_path)
 
-    cu.announce_report(report_path)
+    cu.announce_report(report_path, ledger_path)
     sys.exit(status)
