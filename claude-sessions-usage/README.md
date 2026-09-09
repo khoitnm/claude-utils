@@ -5,13 +5,22 @@ Token usage and estimated cost reports built from the local Claude Code session 
 | File | Role |
 | --- | --- |
 | `claude-sessions-usage.py` | One row per session, for the current calendar month. |
-| `claude-session-analyze.py` | One row per assistant turn, for a single session. |
-| `claude_usage.py` | Shared rules. Not run directly. |
+| `claude-session-analyze.py` | Ranked findings plus one row per assistant turn, for a single session. |
+| `claude_usage.py` | Shared cost rules. Not run directly. |
+| `session_insights.py` | Derived findings for one session. Not run directly. |
 
-Both reports are presentation only — rates, model matching, the billable-turn rule and the
-cost arithmetic all live in `claude_usage.py`, so the two cannot disagree about a session.
-Anything that changes a number belongs in the shared module; anything that changes a layout
-belongs in a script.
+Three layers, and the boundary between them is the point:
+
+- **`claude_usage.py` owns the numbers.** Rates, model matching, the billable-turn rule and the
+  cost arithmetic. If two reports ever disagree about a session, a rule leaked out of here.
+- **`session_insights.py` owns the inference.** Carry-cost attribution, growth causes, and the
+  conclusions drawn from them. It never prints, so the same analysis could feed a different
+  renderer or a cross-session trend later.
+- **The two scripts own presentation only.** Layout, column widths, the report shell.
+
+Anything that changes a number belongs in `claude_usage.py`; anything that changes a
+*conclusion* belongs in `session_insights.py`; anything that changes a layout belongs in a
+script.
 
 ## What it does
 
@@ -67,10 +76,67 @@ Python 3.6+, standard library only. The month report takes no arguments; the per
 takes the session UUID, which is the session's `.jsonl` filename and the first column of the
 month report.
 
-`claude-session-analyze.py` prints the same five priced token components per turn, flags any
-turn reading more than 100,000 cached tokens with `(!)`, and ends with the same rate table and
-Enterprise handling as the month report. Its totals for a session are the same numbers that
-session's row shows in the month report.
+`claude-session-analyze.py` leads with ranked findings, then prints the same five priced token
+components for every turn, and ends with the same rate table and Enterprise handling as the
+month report. Its totals for a session are the same numbers that session's row shows in the
+month report.
+
+## Findings
+
+A per-turn ledger prices a turn by what it spent at the moment it ran, which is the wrong
+question for a session you want to make cheaper. Prompt tokens are re-sent on every later
+turn, so what a turn really costs is what it *added* to the context multiplied by how many
+turns were still to come. A 20k-token file read on step 20 of a 160-step session is not a
+20k-token expense; it is a 20k × 140 expense.
+
+That figure is **carry cost**, and ranking by it is what turns the ledger into advice:
+
+```
+1. [  $12.47] 74% of the bill ($12.47) was re-reading context, not doing work
+2. [   $4.79] Clearing the context at step 59 would have saved up to $4.79
+3. [   $3.38] The static preamble cost $3.38 (20%) just by existing
+4. [   $3.38] The 6 costliest single additions account for $3.38
+         step  20    $1.58  + 19,651 tok re-read 142x  prompt / system-prompt expansion
+         step  22    $0.63  +  7,966 tok re-read 140x  injected:nested_memory + Read(...)
+...
+```
+
+Each finding carries the dollars at stake, the evidence behind it, and what to do about it.
+Findings under 2% of the session, or under a cent, are dropped rather than padded out.
+
+Beyond the ledger, the analysis reads several things the month report ignores:
+
+- **Tool results** — how much context each tool poured in, and what carrying it cost.
+- **Injected attachments** — memory files, skill listings, hook output, deferred tool schemas.
+  Not conversation, and all controllable from outside the session.
+- **Skill attribution** — cost split by the skill that was driving, where the transcript says.
+- **Cache expiry** — turns billed a cache write far larger than the context grew, meaning the
+  prompt cache had expired and the whole prefix was written again. A per-turn ledger cannot
+  show this at all: the charge looks like an ordinary cache write. Since a write costs
+  12.5–20× a read, an idle gap can be the single largest line in a session. One 380-turn
+  session in testing spent **$34.35 of $148 (23%)** re-writing context across five idle gaps
+  of 1–11 hours.
+- **Compaction** — where the history was summarised away. Carry cost is computed within these
+  spans, never across them, because nothing added before a boundary is re-read after it.
+
+Sizing caveats, all stated in the report itself:
+
+- Tool results and attachments are recorded as text, so their token counts are estimated at
+  4 chars per token and marked `~`. Ledger figures are exact.
+- Context growth that matches no recorded block is reported as
+  `prompt / system-prompt expansion` — your prompts, plus skills and tool schemas the harness
+  expanded mid-session. It is a residual, not a measurement.
+- The reset saving is a **ceiling**: it assumes the work after the reset needed none of the
+  history it dropped, which is exactly the assumption a real `/clear` has to earn.
+
+The report footer states how closely the attribution reconciles against what was actually
+billed for prompt tokens — across all 324 local sessions this lands within a percent or two,
+with a worst case around 12%. The residual is cache-boundary rounding: prefix growth and
+billed cache writes do not line up token for token.
+
+In the per-step table, `(!)` now flags a step that added 4,000+ tokens the rest of the session
+had to re-read. It used to flag any turn reading more than 100,000 cached tokens, which on a
+long session fired on nearly every row — a warning that is always on carries no information.
 
 ## Report files
 
@@ -167,3 +233,12 @@ Anthropic-published rate, and the report says so under the table.
 - Live rates are parsed out of a documentation page, not an API. If that page's table changes
   shape the parse yields nothing and the script falls back to cached or built-in rates — check
   the `Pricing Source` line if a total looks off.
+- Findings are derived from one session in isolation. There is no cross-session trend, and no
+  comparison against what a similar session usually costs.
+- Token counts for tool results and injected attachments are estimated from text length, not
+  tokenized. Treat the findings as proportions rather than cents.
+- Compaction boundaries are detected from a fall in context size, not from a marker in the
+  transcript, so a genuine 10,000-token drop from some other cause would read as one.
+- Context growth that matches no recorded block is lumped together as prompt and
+  system-prompt expansion. The transcript does not size those separately, so the report cannot
+  tell a long prompt apart from a skill that loaded mid-session.

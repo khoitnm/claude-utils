@@ -309,27 +309,55 @@ def resolve_model_rates(model_name, pricing):
 # Reading transcripts
 # ---------------------------------------------------------------------------
 
+# What came back from one tool call. `chars` is the serialized size of the
+# result as it was handed to the model - the quantity that lands in the
+# context and gets re-read on every later turn.
+ToolResult = namedtuple("ToolResult", "tool_use_id name chars is_error denied interrupted")
+
+# One block the harness injected rather than the conversation producing it:
+# memory files, skill listings, deferred tool schemas, hook output, reminders.
+Attachment = namedtuple("Attachment", "kind chars")
+
+
 class Turn(object):
     """One assistant API response, counted exactly once.
 
     `blocks` holds the response's content blocks in order, but only when the
     session was read with with_blocks=True; a whole-month report has no use for
     them and they are the bulk of a transcript's bytes.
+
+    `tool_results` and `attachments` hold what arrived *after* this response and
+    before the next one - its aftermath. They are attributed this way because
+    that is what they cost: whatever a turn drags into the context is paid for
+    on the turn after it and every turn beyond. Populated only under
+    with_details=True.
     """
 
-    __slots__ = ("model", "usage", "blocks", "user_context")
+    __slots__ = ("model", "usage", "blocks", "user_context", "timestamp",
+                 "skill", "tool_results", "attachments", "duration_ms")
 
-    def __init__(self, model, usage, user_context):
+    def __init__(self, model, usage, user_context, timestamp=None, skill=None):
         self.model = model
         self.usage = usage
         self.blocks = []
         self.user_context = user_context
+        self.timestamp = timestamp
+        self.skill = skill
+        self.tool_results = []
+        self.attachments = []
+        self.duration_ms = None
+
+    @property
+    def tool_uses(self):
+        """The tool_use blocks of this response, in order (needs with_blocks)."""
+        return [b for b in self.blocks if b.get("type") == "tool_use"]
 
 
 class Session(object):
     """One transcript file: its billable turns plus the metadata reports show."""
 
-    __slots__ = ("session_id", "path", "turns", "start", "end", "months", "summary")
+    __slots__ = ("session_id", "path", "turns", "start", "end", "months", "summary",
+                 "preamble_attachments", "prompts", "denials")
 
     def __init__(self, session_id, path):
         self.session_id = session_id
@@ -339,6 +367,11 @@ class Session(object):
         self.end = None         # "YYYY-MM-DD HH:MM:SS", latest record
         self.months = set()     # every "YYYY-MM" the session has a record in
         self.summary = NO_SUMMARY
+        # Everything the harness injected before the first response - the
+        # static preamble the whole session then carries.
+        self.preamble_attachments = []
+        self.prompts = 0        # human turns, i.e. how much steering it took
+        self.denials = []       # tool calls the user rejected outright
 
 
 NO_SUMMARY = "No summary available"
@@ -369,7 +402,13 @@ def extract_user_text(record):
     return ""
 
 
-def read_session(path, with_blocks=False):
+def iter_content_blocks(record):
+    """The message content blocks of a record, or an empty list."""
+    blocks = record.get("message", {}).get("content")
+    return [b for b in blocks if isinstance(b, dict)] if isinstance(blocks, list) else []
+
+
+def read_session(path, with_blocks=False, with_details=False):
     """Parse one transcript into billable turns plus session metadata.
 
     THE DEDUP RULE, and the reason this module exists. Claude Code writes one
@@ -379,10 +418,17 @@ def read_session(path, with_blocks=False):
     response: they must be billed once, and their content blocks belong to the
     same turn. Counting lines instead of message ids nearly doubles every
     figure on a tool-heavy session.
+
+    with_details additionally records what the harness and the tools fed back
+    into the context - tool results, injected attachments, skill attribution,
+    turn durations - which is most of a transcript's records and none of what a
+    whole-month report needs, hence the flag.
     """
     session = Session(os.path.splitext(os.path.basename(path))[0], path)
     by_message_id = {}
     last_user_context = "Initializing..."
+    tool_names = {}         # tool_use id -> tool name, filled as calls are seen
+    current = None          # the turn whose aftermath we are collecting
 
     for record in iter_records(path):
         timestamp = record.get("timestamp", "")
@@ -403,8 +449,22 @@ def read_session(path, with_blocks=False):
                 last_user_context = text
                 if session.summary == NO_SUMMARY:
                     session.summary = text
+            if with_details:
+                _absorb_user_record(session, record, current, tool_names, bool(text))
         elif session.summary == NO_SUMMARY and "summary" in record:
             session.summary = str(record.get("summary"))
+
+        if with_details:
+            if record_type == "attachment":
+                attachment = record.get("attachment") or {}
+                target = current.attachments if current else session.preamble_attachments
+                target.append(Attachment(
+                    str(attachment.get("type") or "unknown"),
+                    len(json.dumps(attachment, default=str)),
+                ))
+            elif record_type == "system" and record.get("subtype") == "turn_duration":
+                if current is not None and record.get("durationMs") is not None:
+                    current.duration_ms = record.get("durationMs")
 
         if record_type != "assistant":
             continue
@@ -418,17 +478,58 @@ def read_session(path, with_blocks=False):
         turn = by_message_id.get(message_id) if message_id else None
         if turn is None:
             model = record.get("model") or message.get("model") or MODEL_FALLBACK
-            turn = Turn(model, usage, last_user_context)
+            turn = Turn(model, usage, last_user_context,
+                        timestamp=record.get("timestamp"),
+                        skill=record.get("attributionSkill"))
             session.turns.append(turn)
             if message_id:
                 by_message_id[message_id] = turn
+        current = turn
 
+        blocks = iter_content_blocks(record)
         if with_blocks:
-            blocks = message.get("content") or []
-            if isinstance(blocks, list):
-                turn.blocks.extend(b for b in blocks if isinstance(b, dict))
+            turn.blocks.extend(blocks)
+        if with_details:
+            for block in blocks:
+                if block.get("type") == "tool_use":
+                    tool_names[block.get("id")] = block.get("name", "unknown")
 
     return session
+
+
+def _absorb_user_record(session, record, current, tool_names, has_text):
+    """Fold a user record's tool results into the turn that triggered them.
+
+    A user record is either a real human prompt or the harness returning tool
+    output; only the former counts as steering, and only the latter is a
+    context cost the preceding turn caused.
+    """
+    blocks = iter_content_blocks(record)
+    results = [b for b in blocks if b.get("type") == "tool_result"]
+
+    if not results:
+        if has_text and not record.get("isMeta"):
+            session.prompts += 1
+        return
+
+    denial = record.get("toolDenialKind")
+    detail = record.get("toolUseResult")
+    interrupted = bool(isinstance(detail, dict) and detail.get("interrupted"))
+
+    for block in results:
+        tool_use_id = block.get("tool_use_id")
+        result = ToolResult(
+            tool_use_id=tool_use_id,
+            name=tool_names.get(tool_use_id, "unknown"),
+            chars=len(json.dumps(block.get("content"), default=str)),
+            is_error=bool(block.get("is_error")),
+            denied=bool(denial),
+            interrupted=interrupted,
+        )
+        if denial:
+            session.denials.append(result)
+        if current is not None:
+            current.tool_results.append(result)
 
 
 # ---------------------------------------------------------------------------
@@ -460,14 +561,23 @@ def split_usage_tokens(usage):
     }
 
 
-def calculate_turn_cost(tokens, rates):
-    return sum(
-        tokens[component] / 1_000_000 * rates[component]
+def calculate_component_costs(tokens, rates):
+    """The cost each token component contributes, priced separately.
+
+    Reports that ask "where did the money go" need the split, not just the
+    sum; deriving it anywhere else would be a second copy of the arithmetic.
+    """
+    return {
+        component: tokens[component] / 1_000_000 * rates[component]
         for component, _ in RATE_COMPONENTS
-    )
+    }
 
 
-PricedTurn = namedtuple("PricedTurn", "label rates tokens cost")
+def calculate_turn_cost(tokens, rates):
+    return sum(calculate_component_costs(tokens, rates).values())
+
+
+PricedTurn = namedtuple("PricedTurn", "label rates tokens cost component_costs")
 
 
 class CostTally(object):
@@ -479,6 +589,7 @@ class CostTally(object):
 
     def __init__(self):
         self.tokens = {component: 0 for component, _ in RATE_COMPONENTS}
+        self.cost_by_component = {component: 0.0 for component, _ in RATE_COMPONENTS}
         self.cost = 0.0
         self.turns = 0
         self.rates_used = {}
@@ -487,10 +598,12 @@ class CostTally(object):
         """Price one turn, fold it into the totals, and return the detail."""
         label, rates = resolve_model_rates(turn.model, pricing)
         tokens = split_usage_tokens(turn.usage)
-        cost = calculate_turn_cost(tokens, rates)
+        component_costs = calculate_component_costs(tokens, rates)
+        cost = sum(component_costs.values())
 
         for component in self.tokens:
             self.tokens[component] += tokens[component]
+            self.cost_by_component[component] += component_costs[component]
         self.cost += cost
         self.turns += 1
 
@@ -501,12 +614,13 @@ class CostTally(object):
         entry["turns"] += 1
         entry["cost"] += cost
 
-        return PricedTurn(label, rates, tokens, cost)
+        return PricedTurn(label, rates, tokens, cost, component_costs)
 
     def merge(self, other):
         """Fold another tally in, keeping the rate breakdown intact."""
         for component in self.tokens:
             self.tokens[component] += other.tokens[component]
+            self.cost_by_component[component] += other.cost_by_component[component]
         self.cost += other.cost
         self.turns += other.turns
 
@@ -527,6 +641,30 @@ class CostTally(object):
 def cache_write_of(tokens):
     """The displayed cache-write figure for a single turn's token split."""
     return tokens["cache_write_5m"] + tokens["cache_write_1h"]
+
+
+def effective_cache_write_rate(tokens, rates):
+    """The blended per-token write rate a turn actually paid.
+
+    5m and 1h writes are priced differently, so anything reasoning about the
+    cost of *adding* tokens has to use the mix the turn really used rather
+    than assuming the cheaper row.
+    """
+    total = cache_write_of(tokens)
+    if not total:
+        return rates["cache_write_5m"]
+    return (tokens["cache_write_5m"] * rates["cache_write_5m"]
+            + tokens["cache_write_1h"] * rates["cache_write_1h"]) / total
+
+
+def context_size_of(tokens):
+    """How many prompt tokens this turn actually carried.
+
+    Every prompt token is billed exactly once per turn, as a cache read, a
+    cache write or an uncached input, so their sum is the size of the prefix
+    that was sent. This is the number a growing session grows.
+    """
+    return tokens["cache_read"] + cache_write_of(tokens) + tokens["input"]
 
 
 def discounted(cost, enterprise_discount):
