@@ -22,7 +22,7 @@ def analyze_and_generate_advice(session_uuid):
     steps_data = []
     recent_prompts = []
 
-    print(f"\nAnalyzing Session: {target_file.name}\n" + "="*70)
+    print(f"\nAnalyzing Session: {target_file.name}\n" + "="*85)
 
     with open(target_file, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
@@ -62,20 +62,23 @@ def analyze_and_generate_advice(session_uuid):
 
                 steps_data.append({
                     "step": step_count,
-                    "line": line_num,
                     "cache_read": cache_read,
+                    "output": out_tokens,
                     "cost": step_cost,
                     "prompt": current_prompt
                 })
 
-                warning = " ⚠️ [Heavy Context]" if cache_read > 100_000 else ""
-                print(f"Step {step_count} | Cost: ${step_cost:.4f}{warning}")
-                print(f"  └─ Context: {current_prompt[:50]}...")
-                print(f"  └─ Tokens -> Read from memory: {cache_read:,} | Output: {out_tokens:,}")
+    # Print Table Header
+    print(f"{'Step':<6} | {'Cache Read Tokens':<18} | {'Output':<8} | {'Cost':<8} | {'Context Summary'}")
+    print("-" * 85)
 
-    print("="*70)
-    print(f"Total Steps: {step_count}")
-    print(f"Estimated Total Cost: ${total_cost:.4f}\n")
+    for s in steps_data:
+        warning_tag = " ⚠️" if s["cache_read"] > 100_000 else ""
+        prompt_snippet = (s["prompt"][:35] + '..') if len(s["prompt"]) > 37 else s["prompt"]
+        print(f"{s['step']:<6} | {s['cache_read']:<18,} | {s['output']:<8,} | ${s['cost']:<7.4f} | {prompt_snippet}{warning_tag}")
+
+    print("="*85)
+    print(f"Total Steps: {step_count} | Estimated Total Cost: ${total_cost:.4f}\n")
 
     print("🎯 Automated Session Insights & Recommendations:\n")
 
@@ -83,16 +86,14 @@ def analyze_and_generate_advice(session_uuid):
         print(f"• Break Tasks into Micro-Sessions: This session reached {step_count} steps. "
               f"Never let a session drag past 50–100 steps. Once you finish a logical chunk of work "
               f"(like switching branches or debugging a specific ticket), type `/clear` or exit and start "
-              f"a brand-new session to drop your base context back down to near zero.")
-        print()
+              f"a brand-new session to drop your base context back down to near zero.\n")
 
     peak_cache = max([s["cache_read"] for s in steps_data]) if steps_data else 0
     if peak_cache > 150_000:
         print(f"• Constrain Project Indexing: Peak cache read hit {peak_cache:,} tokens. "
               f"If Claude Code is automatically scanning your entire repository structure, massive config files, "
               f"or build outputs into the prompt on startup, add a `.claudeignore` file to your project root "
-              f"to exclude unnecessary files.")
-        print()
+              f"to exclude unnecessary files.\n")
 
     loops_found = []
     current_streak = 1
@@ -111,14 +112,12 @@ def analyze_and_generate_advice(session_uuid):
             print(f"• Stop Multi-Turn Loops: Notice how Steps {start_s} through {end_s} all processed heavy context "
                   f"with the exact same prompt (\"{prompt_text[:40]}...\"). "
                   f"Claude Code got stuck in an internal tool-calling or retry loop. If you see Claude repeating "
-                  f"the same action, interrupt it with `Ctrl+C` or instruct it directly: \"Stop retrying, do it in one shot.\"")
-            print()
+                  f"the same action, interrupt it with `Ctrl+C` or instruct it directly: \"Stop retrying, do it in one shot.\"\n")
 
     if step_count > 150 and peak_cache > 200_000:
         print(f"• Avoid Monolithic Workflows: Trying to code, debug, reproduce, and interact with external systems "
               f"(like JIRA) all in one single {step_count}-step conversation guarantees massive token accumulation. "
-              f"Handle code fixes in one session, close it, and open a fresh session to handle documentation or ticket updates.")
-        print()
+              f"Handle code fixes in one session, close it, and open a fresh session to handle documentation or ticket updates.\n")
 
 if __name__ == "__main__":
     target_uuid = "8e3367d8-93f6-4169-8010-a1c339f56528"
