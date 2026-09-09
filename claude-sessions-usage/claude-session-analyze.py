@@ -25,18 +25,18 @@ def analyze_session_totals(session_uuid):
     total_cost = 0.0
     logical_steps = 0
 
-    print(f"\nAnalyzing Session: {target_file.name}\n" + "="*105)
-    print(f"{'Step':<6} | {'Cache Read':<12} | {'Input':<8} | {'Output':<8} | {'Cost':<8} | {'Assistant Action / Response Detail'}")
-    print("-" * 105)
+    print(f"\nAnalyzing Session: {target_file.name}\n" + "="*160)
+    print(f"{'Step':<6} | {'Cache Read':<12} | {'Input':<8} | {'Output':<8} | {'Cost':<8} | {'Assistant Action / Response Detail (Expanded)'}")
+    print("-" * 160)
 
     with open(target_file, 'r', encoding='utf-8') as f:
         last_user_context = "Initializing..."
-        
+
         for line in f:
             line_str = line.strip()
             if not line_str:
                 continue
-            
+
             try:
                 data = json.loads(line_str)
             except json.JSONDecodeError:
@@ -88,24 +88,24 @@ def analyze_session_totals(session_uuid):
                         if b_type == "text":
                             txt = block.get("text", "").replace("\n", " ").strip()
                             if txt:
-                                action_parts.append(txt[:40])
+                                action_parts.append(txt[:120])
                         elif b_type == "tool_use":
                             t_name = block.get("name", "unknown")
                             t_input = block.get("input", {})
                             detail = ""
                             if t_name == "Bash":
-                                detail = f"({t_input.get('command', '')[:20]})"
+                                detail = f"({t_input.get('command', '')[:50]})"
                             elif t_name in ("View", "Grep", "Glob", "Edit"):
-                                detail = f"({t_input.get('file_path', t_input.get('pattern', ''))[:20]})"
+                                detail = f"({t_input.get('file_path', t_input.get('pattern', ''))[:50]})"
                             action_parts.append(f"[Tool: {t_name}{detail}]")
 
-                action_desc = " | ".join(action_parts) if action_parts else f"User: {last_user_context[:30]}"
+                action_desc = " | ".join(action_parts) if action_parts else f"User: {last_user_context[:80]}"
 
                 warning_tag = " ⚠️" if cache_read > 100_000 else ""
-                snippet = (action_desc[:45] + '..') if len(action_desc) > 47 else action_desc
+                snippet = (action_desc[:115] + '..') if len(action_desc) > 117 else action_desc
                 print(f"{logical_steps:<6} | {cache_read:<12,} | {in_tokens:<8,} | {out_tokens:<8,} | ${step_cost:<7.4f} | {snippet}{warning_tag}")
 
-    print("="*105)
+    print("="*160)
     print(f"Aggregated Totals Across {logical_steps} Logical Steps:")
     print(f"  • Total Input Tokens:       {total_input:,}")
     print(f"  • Total Output Tokens:      {total_output:,}")
