@@ -1,117 +1,131 @@
-import json
+"""Per-step cost breakdown for a single Claude Code session transcript.
+
+Presentation only. Pricing, the billable-turn dedup rule and cost arithmetic
+all live in claude_usage.py, shared with claude-sessions-usage.py so the two
+reports cannot drift apart.
+"""
+
 import sys
 from pathlib import Path
 
-PRICING = {
-    "input": 3.00 / 1_000_000,
-    "output": 15.00 / 1_000_000,
-    "cache_read": 0.30 / 1_000_000,
-}
+import claude_usage as cu
+
+# Cache reads above this in a single response are worth flagging: they usually
+# mean the whole context is being re-read every turn.
+CACHE_READ_WARN_THRESHOLD = 100_000
+
+# Tools whose most useful detail is a path or a pattern rather than a command.
+PATH_TOOLS = ("Read", "View", "Write", "Edit", "Grep", "Glob")
+
+ACTION_MAX_LEN = 117
+
+
+def describe_action(turn):
+    """Summarize what the assistant did in one turn, across all its blocks."""
+    parts = []
+    for block in turn.blocks:
+        block_type = block.get("type")
+        if block_type == "text":
+            text = " ".join(block.get("text", "").split())
+            if text:
+                parts.append(text[:120])
+        elif block_type == "tool_use":
+            name = block.get("name", "unknown")
+            tool_input = block.get("input") or {}
+            detail = ""
+            if isinstance(tool_input, dict):
+                if name == "Bash":
+                    detail = tool_input.get("command", "")
+                elif name in PATH_TOOLS:
+                    detail = tool_input.get("file_path") or tool_input.get("pattern") or ""
+            detail = " ".join(str(detail).split())[:50]
+            parts.append("[Tool: {}({})]".format(name, detail) if detail
+                         else "[Tool: {}]".format(name))
+
+    if parts:
+        return " | ".join(parts)
+    return "User: {}".format(turn.user_context[:80])
+
+
+def find_transcript(session_uuid):
+    projects = Path(cu.projects_dir())
+    matches = sorted(projects.glob("**/{}.jsonl".format(session_uuid)))
+    return matches[0] if matches else None
+
 
 def analyze_session_totals(session_uuid):
-    projects_dir = Path.home() / ".claude" / "projects"
-    matching_files = list(projects_dir.glob(f"**/{session_uuid}.jsonl"))
-    
-    if not matching_files:
-        print(f"[ERROR] Session file for UUID '{session_uuid}' not found under {projects_dir}", file=sys.stderr)
-        return
+    target_file = find_transcript(session_uuid)
+    if target_file is None:
+        print("[ERROR] Session file for UUID '{}' not found under {}".format(
+            session_uuid, cu.projects_dir()), file=sys.stderr)
+        return 1
 
-    target_file = matching_files[0]
-    seen_message_ids = set()
-    
-    total_input = 0
-    total_output = 0
-    total_cache_read = 0
-    total_cost = 0.0
-    logical_steps = 0
+    pricing, pricing_source = cu.load_pricing()
+    enterprise_discount = cu.load_enterprise_discount()
 
-    print(f"\nAnalyzing Session: {target_file.name}\n" + "="*160)
-    print(f"{'Step':<6} | {'Cache Read':<12} | {'Input':<8} | {'Output':<8} | {'Cost':<8} | {'Assistant Action / Response Detail (Expanded)'}")
-    print("-" * 160)
+    session = cu.read_session(str(target_file), with_blocks=True)
+    if not session.turns:
+        print("[ERROR] No token usage found in {}".format(target_file), file=sys.stderr)
+        return 1
 
-    with open(target_file, 'r', encoding='utf-8') as f:
-        last_user_context = "Initializing..."
+    tally = cu.CostTally()
+    rows = []
 
-        for line in f:
-            line_str = line.strip()
-            if not line_str:
-                continue
+    for index, turn in enumerate(session.turns, start=1):
+        priced = tally.add_turn(turn, pricing)
 
-            try:
-                data = json.loads(line_str)
-            except json.JSONDecodeError:
-                continue
+        action = describe_action(turn)
+        if len(action) > ACTION_MAX_LEN:
+            action = action[:ACTION_MAX_LEN - 2] + ".."
+        if priced.tokens["cache_read"] > CACHE_READ_WARN_THRESHOLD:
+            action += " (!)"
 
-            msg_type = data.get("type")
-            if msg_type == "user":
-                content = data.get("message", {}).get("content", "")
-                if isinstance(content, list):
-                    texts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
-                    if texts:
-                        last_user_context = texts[0].replace("\n", " ")
-                elif isinstance(content, str) and content:
-                    last_user_context = content.replace("\n", " ")
+        rows.append([
+            str(index),
+            priced.label,
+            "{:,d}".format(priced.tokens["cache_read"]),
+            "{:,d}".format(cu.cache_write_of(priced.tokens)),
+            "{:,d}".format(priced.tokens["input"]),
+            "{:,d}".format(priced.tokens["output"]),
+            "${:,.4f}".format(priced.cost),
+            action,
+        ])
 
-            message = data.get("message", {})
-            msg_id = message.get("id")
+    headers = ["Step", "Model", "Cache Read", "Cache Write", "Input", "Output", "Cost",
+               "Assistant Action / Response Detail"]
 
-            if msg_id:
-                if msg_id in seen_message_ids:
-                    continue
-                seen_message_ids.add(msg_id)
+    print("\nAnalyzing Session: {}".format(target_file.name))
+    print("Session Window:            {} -> {}".format(
+        session.start or "N/A", session.end or "N/A"))
+    cu.print_pricing_provenance(pricing_source, enterprise_discount)
 
-            usage = message.get("usage", {}) or data.get("usage", {})
-            if usage:
-                logical_steps += 1
-                in_tokens = usage.get("input_tokens", 0)
-                out_tokens = usage.get("output_tokens", 0)
-                cache_read = usage.get("cache_read_input_tokens", 0)
+    for line in cu.render_table(headers, rows, right_align=(0, 2, 3, 4, 5, 6)):
+        print(line)
 
-                step_cost = (
-                    (in_tokens * PRICING["input"]) +
-                    (out_tokens * PRICING["output"]) +
-                    (cache_read * PRICING["cache_read"])
-                )
+    print("Aggregated Totals Across {} Logical Steps:".format(tally.turns))
+    print("  - Total Input Tokens:        {:,}".format(tally.tokens["input"]))
+    print("  - Total Output Tokens:       {:,}".format(tally.tokens["output"]))
+    print("  - Total Cache Read Tokens:   {:,}".format(tally.tokens["cache_read"]))
+    print("  - Total Cache Write Tokens:  {:,}".format(tally.cache_write))
+    print("  - Estimated Total Cost:      ${:.4f}".format(tally.cost))
+    if enterprise_discount is not None:
+        print("  - Cost (Enterprise):         ${:.4f}".format(
+            cu.discounted(tally.cost, enterprise_discount)))
 
-                total_input += in_tokens
-                total_output += out_tokens
-                total_cache_read += cache_read
-                total_cost += step_cost
+    print("\nPricing Table Used (USD per million tokens)")
+    for line in cu.build_rates_table(tally.rates_used, enterprise_discount):
+        print(line)
 
-                action_parts = []
-                content_blocks = message.get("content", [])
-                if isinstance(content_blocks, list):
-                    for block in content_blocks:
-                        if not isinstance(block, dict):
-                            continue
-                        b_type = block.get("type")
-                        if b_type == "text":
-                            txt = block.get("text", "").replace("\n", " ").strip()
-                            if txt:
-                                action_parts.append(txt[:120])
-                        elif b_type == "tool_use":
-                            t_name = block.get("name", "unknown")
-                            t_input = block.get("input", {})
-                            detail = ""
-                            if t_name == "Bash":
-                                detail = f"({t_input.get('command', '')[:50]})"
-                            elif t_name in ("View", "Grep", "Glob", "Edit"):
-                                detail = f"({t_input.get('file_path', t_input.get('pattern', ''))[:50]})"
-                            action_parts.append(f"[Tool: {t_name}{detail}]")
+    cu.print_enterprise_footnote(enterprise_discount)
+    print()
+    return 0
 
-                action_desc = " | ".join(action_parts) if action_parts else f"User: {last_user_context[:80]}"
-
-                warning_tag = " ⚠️" if cache_read > 100_000 else ""
-                snippet = (action_desc[:115] + '..') if len(action_desc) > 117 else action_desc
-                print(f"{logical_steps:<6} | {cache_read:<12,} | {in_tokens:<8,} | {out_tokens:<8,} | ${step_cost:<7.4f} | {snippet}{warning_tag}")
-
-    print("="*160)
-    print(f"Aggregated Totals Across {logical_steps} Logical Steps:")
-    print(f"  • Total Input Tokens:       {total_input:,}")
-    print(f"  • Total Output Tokens:      {total_output:,}")
-    print(f"  • Total Cache Read Tokens:  {total_cache_read:,}")
-    print(f"  • Estimated Total Cost:     ${total_cost:.4f}\n")
 
 if __name__ == "__main__":
-    target_uuid = "8e3367d8-93f6-4169-8010-a1c339f56528"
-    analyze_session_totals(target_uuid)
+    cu.configure_stdout()
+
+    if len(sys.argv) != 2:
+        print("Usage: python claude-session-analyze.py <session-uuid>", file=sys.stderr)
+        sys.exit(2)
+
+    sys.exit(analyze_session_totals(sys.argv[1]))

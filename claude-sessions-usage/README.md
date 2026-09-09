@@ -1,7 +1,17 @@
 # claude-sessions-usage
 
-Prints a per-session token usage and estimated cost report for the current calendar month,
-built from the local Claude Code session logs.
+Token usage and estimated cost reports built from the local Claude Code session logs.
+
+| File | Role |
+| --- | --- |
+| `claude-sessions-usage.py` | One row per session, for the current calendar month. |
+| `claude-session-analyze.py` | One row per assistant turn, for a single session. |
+| `claude_usage.py` | Shared rules. Not run directly. |
+
+Both reports are presentation only — rates, model matching, the billable-turn rule and the
+cost arithmetic all live in `claude_usage.py`, so the two cannot disagree about a session.
+Anything that changes a number belongs in the shared module; anything that changes a layout
+belongs in a script.
 
 ## What it does
 
@@ -49,10 +59,18 @@ Both tables are wide (200+ characters) — use a wide terminal or pipe the outpu
 ## Usage
 
 ```bash
-python claude-sessions-usage.py
+python claude-sessions-usage.py                          # this month, one row per session
+python claude-session-analyze.py <session-uuid>          # one session, one row per turn
 ```
 
-Python 3.6+, standard library only. No arguments and no configuration.
+Python 3.6+, standard library only. The month report takes no arguments; the per-turn report
+takes the session UUID, which is the session's `.jsonl` filename and the first column of the
+month report.
+
+`claude-session-analyze.py` prints the same five priced token components per turn, flags any
+turn reading more than 100,000 cached tokens with `(!)`, and ends with the same rate table and
+Enterprise handling as the month report. Its totals for a session are the same numbers that
+session's row shows in the month report.
 
 It reads the session logs without modifying them, but it is not fully offline: it makes one
 HTTPS request to the pricing docs (see below) and writes a small rate cache under
@@ -79,6 +97,13 @@ Every path prices five components separately: base input, output, 5-minute cache
 write (for Opus, $10/MTok vs $6.25), and transcripts report the split under
 `usage.cache_creation` — older transcripts carrying only a flat total are priced at the
 5-minute rate.
+
+Usage is counted per API response, not per log line. Claude Code writes one JSONL line per
+content block and repeats the entire `usage` object on each, so a turn made of text plus a
+tool call appears two or more times under a single message id. Those lines are one billable
+response and are counted once; treating them as separate turns nearly doubles every figure on
+a tool-heavy session. This rule lives in `read_session()` in `claude_usage.py` and is the one
+both reports share.
 
 Model IDs are matched to a rate row by family and version, so `claude-haiku-4-5-20251001`,
 `claude-opus-5[1m]`, and `claude-3-5-sonnet-20241022` all resolve correctly. An unrecognized
