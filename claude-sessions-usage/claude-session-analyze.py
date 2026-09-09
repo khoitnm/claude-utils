@@ -8,17 +8,18 @@ PRICING = {
     "cache_read": 0.30 / 1_000_000,
 }
 
-def analyze_and_explain(session_uuid):
+def analyze_and_generate_advice(session_uuid):
     projects_dir = Path.home() / ".claude" / "projects"
     matching_files = list(projects_dir.glob(f"**/{session_uuid}.jsonl"))
 
     if not matching_files:
-        print(f"[ERROR] Session file for UUID '{session_uuid}' not found.", file=sys.stderr)
+        print(f"[ERROR] Session file for UUID '{session_uuid}' not found under {projects_dir}", file=sys.stderr)
         return
 
     target_file = matching_files[0]
     total_cost = 0.0
     step_count = 0
+    steps_data = []
     recent_prompts = []
 
     print(f"\nAnalyzing Session: {target_file.name}\n" + "="*70)
@@ -36,15 +37,13 @@ def analyze_and_explain(session_uuid):
 
             msg_type = data.get("type")
 
-            # Capture user text to understand context
             if msg_type == "user":
                 content = data.get("message", {}).get("content", "")
                 if isinstance(content, list):
                     content = " ".join([c.get("text", "") for c in content if isinstance(c, dict)])
                 if content:
-                    recent_prompts.append(content[:60].replace("\n", " "))
+                    recent_prompts.append(content[:80].replace("\n", " "))
 
-            # Look for token usage (assistant responses)
             usage = data.get("message", {}).get("usage", {}) or data.get("usage", {})
             if usage:
                 step_count += 1
@@ -59,29 +58,68 @@ def analyze_and_explain(session_uuid):
                 )
                 total_cost += step_cost
 
-                # Get a hint of what was being worked on
-                context_hint = recent_prompts[-1] if recent_prompts else "Tool execution / background step"
-                if len(context_hint) > 50:
-                    context_hint = context_hint[:47] + "..."
+                current_prompt = recent_prompts[-1] if recent_prompts else "Background / Tool step"
 
-                # Flag high-cost cache reads
+                steps_data.append({
+                    "step": step_count,
+                    "line": line_num,
+                    "cache_read": cache_read,
+                    "cost": step_cost,
+                    "prompt": current_prompt
+                })
+
                 warning = " ⚠️ [Heavy Context]" if cache_read > 100_000 else ""
-
                 print(f"Step {step_count} | Cost: ${step_cost:.4f}{warning}")
-                print(f"  └─ Context: {context_hint}")
-                print(f"  └─ Tokens -> Read from memory (Cache): {cache_read:,} | New Output: {out_tokens:,}")
+                print(f"  └─ Context: {current_prompt[:50]}...")
+                print(f"  └─ Tokens -> Read from memory: {cache_read:,} | Output: {out_tokens:,}")
 
     print("="*70)
     print(f"Total Steps: {step_count}")
     print(f"Estimated Total Cost: ${total_cost:.4f}\n")
 
-    print("💡 Developer Takeaways & How to Improve:")
-    print("1. Massive Cache Reads: If your 'Cache Read' is over 100k tokens every step,")
-    print("   Claude is re-scanning a massive amount of your codebase or large log files.")
-    print("2. How to fix: Keep sessions short. When a task is done, run '/clear'")
-    print("   or start a fresh session so Claude doesn't carry forward bloated history.")
-    print("3. Avoid feeding giant files or build outputs directly into Claude's chat.")
+    print("🎯 Automated Session Insights & Recommendations:\n")
+
+    if step_count > 100:
+        print(f"• Break Tasks into Micro-Sessions: This session reached {step_count} steps. "
+              f"Never let a session drag past 50–100 steps. Once you finish a logical chunk of work "
+              f"(like switching branches or debugging a specific ticket), type `/clear` or exit and start "
+              f"a brand-new session to drop your base context back down to near zero.")
+        print()
+
+    peak_cache = max([s["cache_read"] for s in steps_data]) if steps_data else 0
+    if peak_cache > 150_000:
+        print(f"• Constrain Project Indexing: Peak cache read hit {peak_cache:,} tokens. "
+              f"If Claude Code is automatically scanning your entire repository structure, massive config files, "
+              f"or build outputs into the prompt on startup, add a `.claudeignore` file to your project root "
+              f"to exclude unnecessary files.")
+        print()
+
+    loops_found = []
+    current_streak = 1
+    for i in range(1, len(steps_data)):
+        if steps_data[i]["prompt"] == steps_data[i-1]["prompt"] and steps_data[i]["cache_read"] > 100_000:
+            current_streak += 1
+        else:
+            if current_streak >= 3:
+                loops_found.append((steps_data[i-1]["step"] - current_streak + 1, steps_data[i-1]["step"], steps_data[i-1]["prompt"]))
+            current_streak = 1
+    if current_streak >= 3:
+        loops_found.append((steps_data[-1]["step"] - current_streak + 1, steps_data[-1]["step"], steps_data[-1]["prompt"]))
+
+    if loops_found:
+        for start_s, end_s, prompt_text in loops_found:
+            print(f"• Stop Multi-Turn Loops: Notice how Steps {start_s} through {end_s} all processed heavy context "
+                  f"with the exact same prompt (\"{prompt_text[:40]}...\"). "
+                  f"Claude Code got stuck in an internal tool-calling or retry loop. If you see Claude repeating "
+                  f"the same action, interrupt it with `Ctrl+C` or instruct it directly: \"Stop retrying, do it in one shot.\"")
+            print()
+
+    if step_count > 150 and peak_cache > 200_000:
+        print(f"• Avoid Monolithic Workflows: Trying to code, debug, reproduce, and interact with external systems "
+              f"(like JIRA) all in one single {step_count}-step conversation guarantees massive token accumulation. "
+              f"Handle code fixes in one session, close it, and open a fresh session to handle documentation or ticket updates.")
+        print()
 
 if __name__ == "__main__":
     target_uuid = "8e3367d8-93f6-4169-8010-a1c339f56528"
-    analyze_and_explain(target_uuid)
+    analyze_and_generate_advice(target_uuid)
