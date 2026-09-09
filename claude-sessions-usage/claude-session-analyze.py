@@ -128,4 +128,11 @@ if __name__ == "__main__":
         print("Usage: python claude-session-analyze.py <session-uuid>", file=sys.stderr)
         sys.exit(2)
 
-    sys.exit(analyze_session_totals(sys.argv[1]))
+    session_uuid = sys.argv[1]
+    filename = "session-analyze_{}.txt".format(cu.safe_name_part(session_uuid))
+
+    with cu.report_to_file("session-analyze", filename) as report_path:
+        status = analyze_session_totals(session_uuid)
+
+    cu.announce_report(report_path)
+    sys.exit(status)

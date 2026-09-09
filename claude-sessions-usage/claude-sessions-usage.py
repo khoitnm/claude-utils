@@ -125,4 +125,9 @@ def get_claude_session_details():
 
 if __name__ == "__main__":
     cu.configure_stdout()
-    sys.exit(get_claude_session_details())
+
+    with cu.report_to_file("sessions-usage", "sessions-usage.txt") as report_path:
+        status = get_claude_session_details()
+
+    cu.announce_report(report_path)
+    sys.exit(status)

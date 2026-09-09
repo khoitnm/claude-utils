@@ -72,6 +72,31 @@ turn reading more than 100,000 cached tokens with `(!)`, and ends with the same 
 Enterprise handling as the month report. Its totals for a session are the same numbers that
 session's row shows in the month report.
 
+## Report files
+
+Every run prints to the console *and* saves the identical text to its own folder under
+`reports/`, named with the local date and time it started:
+
+```
+reports/
+  2026-09-08_21-11-36_session-analyze/session-analyze_8e3367d8-93f6-4169-8010-a1c339f56528.txt
+  2026-09-08_21-11-37_sessions-usage/sessions-usage.txt
+```
+
+A run never overwrites an earlier one, so two reports can be diffed against each other. Two
+runs starting inside the same second get a `-2`, `-3` suffix. The console output ends with a
+`Report saved to:` line that is not part of the saved file.
+
+Set `CLAUDE_USAGE_REPORT_DIR` to save somewhere other than `reports/`:
+
+```bash
+CLAUDE_USAGE_REPORT_DIR=/tmp/claude-reports python claude-sessions-usage.py
+```
+
+Saving is best-effort: if the folder cannot be created the run says so on stderr and still
+prints the full report. A run that produces no output (an unknown session UUID, say) leaves no
+empty folder behind. `reports/` is gitignored.
+
 It reads the session logs without modifying them, but it is not fully offline: it makes one
 HTTPS request to the pricing docs (see below) and writes a small rate cache under
 `~/.cache/claude-sessions-usage/`. With no network it still runs, using cached or built-in rates.

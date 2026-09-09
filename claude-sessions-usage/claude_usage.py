@@ -9,9 +9,11 @@ of this module and back into a script.
 Python 3.6+, standard library only.
 """
 
+import contextlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -629,3 +631,94 @@ def configure_stdout():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, OSError):
         pass
+
+
+# ---------------------------------------------------------------------------
+# Saving a run's output
+# ---------------------------------------------------------------------------
+
+# Every run gets its own folder, so a report is never overwritten and two runs
+# can be diffed against each other.
+REPORT_ROOT_ENV = "CLAUDE_USAGE_REPORT_DIR"
+DEFAULT_REPORT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+
+# Local time. Colons are illegal in Windows paths, hence the dashes.
+RUN_STAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
+
+
+def report_root():
+    return os.environ.get(REPORT_ROOT_ENV, "").strip() or DEFAULT_REPORT_ROOT
+
+
+def safe_name_part(text, fallback="report"):
+    """Reduce arbitrary text (a session UUID, say) to a safe filename part."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(text)).strip("-.")
+    return cleaned[:80] or fallback
+
+
+def make_run_dir(slug, now=None):
+    """Create and return this run's folder, named '<local-datetime>_<slug>'."""
+    stamp = (now or datetime.now()).strftime(RUN_STAMP_FORMAT)
+    base = os.path.join(report_root(), "{}_{}".format(stamp, safe_name_part(slug)))
+
+    candidate, suffix = base, 2
+    while os.path.exists(candidate):  # two runs inside the same second
+        candidate = "{}-{}".format(base, suffix)
+        suffix += 1
+
+    os.makedirs(candidate)
+    return candidate
+
+
+class _Tee(object):
+    """Fans stdout writes out to the console and the run's report file."""
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
+
+    def isatty(self):
+        return False
+
+
+@contextlib.contextmanager
+def report_to_file(slug, filename):
+    """Mirror everything printed to stdout into a fresh per-run report folder.
+
+    Yields the report's path, or None if it could not be opened - a report that
+    cannot be saved should still reach the console. A run that prints nothing
+    (an error handled on stderr) leaves no empty folder behind.
+    """
+    try:
+        run_dir = make_run_dir(slug)
+        path = os.path.join(run_dir, filename)
+        handle = open(path, "w", encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print("Not saving a report file: {}".format(exc), file=sys.stderr)
+        yield None
+        return
+
+    original_stdout = sys.stdout
+    sys.stdout = _Tee(original_stdout, handle)
+    try:
+        yield path
+    finally:
+        sys.stdout = original_stdout
+        handle.close()
+        if os.path.getsize(path) == 0:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def announce_report(path):
+    """Tell the console where the run was saved. Console only: printed after
+    the tee is torn down, so the report does not end with a note about itself."""
+    if path and os.path.exists(path):
+        print("Report saved to: {}".format(path))

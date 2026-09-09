@@ -32,3 +32,4 @@ desktop.ini
 # Local script output
 *.log
 out/
+reports/
