@@ -17,8 +17,10 @@ python claude-sessions-usage.py
 
 Answers: *"How much did I use Claude this month?"*
 
-You get one line per chat for the current month, with its date, a short reminder of what it was
-about, and its estimated cost — then a grand total at the bottom.
+You get a grand total for the month on screen. The line-by-line detail — one row per chat, with
+its date, a reminder of what it was about, its estimated cost and its token counts — goes into a
+spreadsheet file (`.csv`) next to the report, so the reminder text is long enough to actually
+recognise the chat.
 
 ## 2. The single-chat breakdown
 
@@ -28,7 +30,8 @@ python claude-session-analyze.py <session-id>
 
 Answers: *"Why was that one chat so expensive, and what should I do differently?"*
 
-The `<session-id>` is the long ID in the first column of the monthly report — copy and paste it.
+The `<session-id>` is the long ID in the first column of the monthly report's `.csv` — copy and
+paste it.
 
 You get a short list of the biggest reasons that chat cost what it did (for example: a huge file
 was read early on and then re-sent on every later message), each with a dollar figure and a

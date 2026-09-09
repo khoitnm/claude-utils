@@ -11,6 +11,8 @@ from datetime import datetime
 
 import claude_usage as cu
 
+SUMMARY_MAX_LEN = 250
+
 
 def collect_sessions(month, pricing):
     """Price every transcript with a record in `month`.
@@ -46,46 +48,69 @@ def collect_sessions(month, pricing):
     return records, overall
 
 
-def print_session_table(records, enterprise_discount):
-    # Widths hold the largest realistic values, so rows stay aligned with the
-    # header and with each other.
-    header = ("{:<38} | {:<19} | {:<19} | {:<10} | {:<40} | {:<12} | {:<12} | "
-              "{:<15} | {:<13}").format(
-        "Session Hash / ID", "Start Date", "End Date", "Cost", "Summary",
-        "Input Tok", "Output Tok", "Cache R", "Cache W")
+def session_ledger(records, enterprise_discount):
+    """The per-session table as CSV headers and rows.
+
+    Unformatted on purpose - raw integers and floats, no thousands separators
+    and no dollar signs - so a spreadsheet can sort and filter it. The summary
+    is the one clipped field: SUMMARY_MAX_LEN keeps a runaway first prompt from
+    dwarfing every other column when the file is opened.
+    """
+    headers = ["session_id", "start", "end", "cost"]
     if enterprise_discount is not None:
-        header += " | {:<11}".format("Cost (Ent)")
+        headers.append("cost_ent")
+    headers.extend(["input", "output", "cache_read", "cache_write", "summary"])
 
-    border_line = "-" * len(header)
-    print(border_line)
-    print(header)
-    print(border_line)
-
+    rows = []
     for session, tally in records:
-        row = ("{:<38} | {:<19} | {:<19} | {:<10} | {:<40} | {:<12,d} | {:<12,d} | "
-               "{:<15,d} | {:<13,d}").format(
+        row = [
             session.session_id,
-            session.start or "N/A",
-            session.end or "N/A",
-            "${:.4f}".format(tally.cost),
-            cu.clean_summary_text(session.summary, max_len=100),
+            session.start or "",
+            session.end or "",
+            round(tally.cost, 6),
+        ]
+        if enterprise_discount is not None:
+            row.append(round(cu.discounted(tally.cost, enterprise_discount), 6))
+        row.extend([
             tally.tokens["input"],
             tally.tokens["output"],
             tally.tokens["cache_read"],
-            tally.cache_write)
-        if enterprise_discount is not None:
-            row += " | {:<11}".format(
-                "${:.4f}".format(cu.discounted(tally.cost, enterprise_discount)))
-        print(row)
-
-    print(border_line)
+            tally.cache_write,
+            cu.clean_summary_text(session.summary, max_len=SUMMARY_MAX_LEN),
+        ])
+        rows.append(row)
+    return headers, rows
 
 
-def get_claude_session_details():
+def print_table_pointer(csv_path, rows, enterprise_discount):
+    """Where the per-session table went, and what is in it.
+
+    The table itself is too wide to print: a summary worth reading does not fit
+    a fixed-width column, so the rows go to a CSV and the report keeps the
+    totals.
+    """
+    print("\nPer-Session Table")
+    if not csv_path:
+        print("  Not saved: the run has no report folder to write it into.")
+        return
+    print("  {:,} rows, one per session -> {}".format(
+        rows, os.path.basename(csv_path)))
+    if enterprise_discount is not None:
+        print("  cost/cost_ent       billed cost, and the same after the "
+              "enterprise discount")
+    else:
+        print("  cost                billed cost for the session")
+    print("  input/output        tokens billed at the full rate")
+    print("  cache_read/_write   tokens billed at the cache rates")
+    print("  summary             first {} characters of the session summary".format(
+        SUMMARY_MAX_LEN))
+
+
+def get_claude_session_details(report_path):
     if not os.path.exists(cu.projects_dir()):
         print("Directory not found: {}. Ensure Claude Code has been initialized.".format(
             cu.projects_dir()))
-        return 1
+        return 1, None
 
     pricing, pricing_source = cu.load_pricing()
     enterprise_discount = cu.load_enterprise_discount()
@@ -101,9 +126,15 @@ def get_claude_session_details():
     print("Report End Date:           {}".format(report_end or "N/A"))
     cu.print_pricing_provenance(pricing_source, enterprise_discount)
 
-    print_session_table(records, enterprise_discount)
+    headers, rows = session_ledger(records, enterprise_discount)
+    csv_path = cu.write_csv(
+        cu.side_file(report_path, "{}_sessions.csv".format(
+            os.path.splitext(os.path.basename(report_path))[0]
+            if report_path else "sessions-usage")),
+        headers, rows)
+    print_table_pointer(csv_path, len(rows), enterprise_discount)
 
-    print("Total Sessions This Month: {}".format(len(records)))
+    print("\nTotal Sessions This Month: {}".format(len(records)))
     print("Total Token Usage:         Input: {:,d} | Output: {:,d} | Cache Read: {:,d} | "
           "Cache Write: {:,d}".format(
               overall.tokens["input"], overall.tokens["output"],
@@ -120,14 +151,14 @@ def get_claude_session_details():
 
     cu.print_enterprise_footnote(enterprise_discount)
     print()
-    return 0
+    return 0, csv_path
 
 
 if __name__ == "__main__":
     cu.configure_stdout()
 
     with cu.report_to_file("sessions-usage", "sessions-usage.txt") as report_path:
-        status = get_claude_session_details()
+        status, table_path = get_claude_session_details(report_path)
 
-    cu.announce_report(report_path)
+    cu.announce_report(report_path, table_path)
     sys.exit(status)

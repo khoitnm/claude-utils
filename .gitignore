@@ -33,3 +33,4 @@ desktop.ini
 *.log
 out/
 reports/
+/.claude/settings.json
