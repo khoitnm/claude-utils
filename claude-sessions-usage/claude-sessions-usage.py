@@ -68,7 +68,7 @@ def print_session_table(records, enterprise_discount):
             session.start or "N/A",
             session.end or "N/A",
             "${:.4f}".format(tally.cost),
-            cu.clean_summary_text(session.summary, max_len=40),
+            cu.clean_summary_text(session.summary, max_len=100),
             tally.tokens["input"],
             tally.tokens["output"],
             tally.tokens["cache_read"],
