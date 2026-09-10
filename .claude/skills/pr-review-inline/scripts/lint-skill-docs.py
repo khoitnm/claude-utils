@@ -70,10 +70,17 @@ MIN_DUP_WORDS = 12         # ignore short bullets; they collide by chance
 
 
 def md_files(root):
+    """Every checklist file in the skill.
+
+    README.md is not one: it is install and usage documentation for whoever sets
+    the skill up, never loaded into a review's context. Holding it to the
+    checklist rules would demand it be dispatched from SKILL.md and forbid it
+    from naming a real repo in an example.
+    """
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in {".git", "scripts"}]
         for name in sorted(filenames):
-            if name.endswith(".md"):
+            if name.endswith(".md") and name != "README.md":
                 yield os.path.join(dirpath, name)
 
 
