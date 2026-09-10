@@ -11,8 +11,7 @@ language-specific expressions of the same ideas.
 - Anything in the diff **not** explained by the description — an unrelated
   refactor, a commented-out block, a config change — call it out. Scope creep in a
   PR is how unreviewed changes ship.
-- Debug leftovers: `console.log`, `System.out.println`, `printStackTrace`,
-  `TODO`/`FIXME` with no ticket, commented-out code, `.only`/`@Disabled` on tests,
+- Debug leftovers: `console.log`, `System.out.println`, `printStackTrace`, `.only`/`@Disabled` on tests,
   hardcoded local URLs, `debugger` statements.
 
 ## 2. Error handling and silent failure

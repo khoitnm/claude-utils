@@ -8,15 +8,15 @@ Every file is written to be gated on what
 found in `pom.xml` / `build.gradle`. Skip any section whose library is not a
 dependency of this repo.
 
-| Read this | When the diff… |
-| --- | --- |
-| **[core-java.md](core-java.md)** | Touches any `.java` file. Always applies. Language semantics, nullability, collections, streams, `equals`/`hashCode`, immutability, Optional, Lombok. |
+| Read this | When the diff…                                                                                                                                                                                   |
+| --- |--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **[core-java.md](core-java.md)** | Touches any `.java` file. Always applies. Language semantics, nullability, collections, streams, `equals`/`hashCode`, immutability, Optional, Lombok.                                            |
 | **[spring.md](spring.md)** | Touches Spring components: `@Service`, `@Component`, `@Controller`, `@Configuration`, `@Transactional`, bean wiring, `application.yml`, Spring Security config, `@Scheduled`, `@Async`, WebFlux. |
-| **[persistence-sql.md](persistence-sql.md)** | Touches entities, repositories, DAOs, queries (JPQL/SQL/Criteria/MyBatis), migrations (Flyway/Liquibase), `*.sql`, or stored procedures. |
-| **[api-contracts.md](api-contracts.md)** | Adds or changes an endpoint, request/response DTO, serialized payload, published event, or a public method on a shared library. |
-| **[concurrency-performance.md](concurrency-performance.md)** | Touches threads, executors, `@Async`, `CompletableFuture`, reactive chains, caching, shared mutable state, batch jobs, or anything in a hot path. |
-| **[security.md](security.md)** | Touches authentication, authorization, tenancy, input handling, crypto, file/path handling, deserialization, logging of user data, or dependency versions. |
-| **[testing.md](testing.md)** | Touches any `src/test/**` file, **or** adds production logic with no accompanying test. |
+| **[persistence-sql.md](persistence-sql.md)** | Touches entities, repositories, DAOs, queries (JPQL/SQL/Criteria/MyBatis), migrations (Flyway/Liquibase), `*.sql`, or stored procedures.                                                         |
+| **[api-contracts.md](api-contracts.md)** | Adds or changes an endpoint, request/response DTO (`*Dto.java`), serialized payload, published event (`*Event*.java`), or Transactional Outbox methods (`*OutboxJob*.java`).                     |
+| **[concurrency-performance.md](concurrency-performance.md)** | Touches threads, executors, `@Async`, `CompletableFuture`, `ParallelStream`, reactive chains, caching, shared mutable state, batch jobs, or anything in a hot path.                               |
+| **[security.md](security.md)** | Touches authentication, authorization, tenancy, input handling, crypto, file/path handling, deserialization, logging of user data, or dependency versions.                                       |
+| **[testing.md](testing.md)** | Touches any `src/test/**` file, **or** adds production logic with no accompanying test.                                                                                                          |
 
 Also always apply
 [`../pr-review-shared/cross-cutting.md`](../pr-review-shared/cross-cutting.md).
