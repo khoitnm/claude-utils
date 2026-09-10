@@ -15,7 +15,13 @@ this file would tune, the finding is the ban. See
 ### Fetching — the N+1 section
 
 The most common performance defect in a Java PR, and it never shows up in a unit
-test with two rows.
+test with two rows. **Which findings are available to you depends on how this repo
+models relationships.** Establish that first — from the rules, or from what the
+existing entities do — because the two styles have different defects and different
+fixes, and a fix from the wrong style will be rejected.
+
+**Style 1 — mapped associations** (`@ManyToOne`, `@OneToMany`, … present on
+entities):
 
 - A new `@ManyToOne`/`@OneToOne` defaults to **EAGER**. Every load of the owning
   entity now drags in the association, everywhere in the application — not just in
@@ -24,11 +30,41 @@ test with two rows.
   one query per element. Fix with a `JOIN FETCH`, an `@EntityGraph`, or a batch
   size.
 - `JOIN FETCH` on two collections in one query produces a cartesian product.
-- A new `findAll()` on a table that grows unbounded.
 - Pagination combined with `JOIN FETCH` on a collection makes Hibernate paginate in
   memory — it logs a warning and loads everything.
+- A lazy association dereferenced outside an open session throws
+  `LazyInitializationException` — likelier where `spring.jpa.open-in-view` is
+  `false`, so the session lives only inside an explicit transaction or a single
+  repository call.
+
+**Style 2 — no mapped associations**: relationships are plain scalar id columns
+(`private long featureId;`), and each query fetches exactly what it needs via an
+explicit join returning a projection or DTO. Repos adopt this deliberately, to
+avoid *both* fetch strategies: no EAGER surprises, no lazy-loading exceptions, no
+fetch-strategy tuning at all. In such a repo:
+
+- **Adding any mapped association is the finding**, eager or lazy. The fix is a
+  scalar id plus a query that selects the related fields.
+- N+1 still exists, in a different shape: a loop calling a repository per id, a
+  `stream().map(id -> repo.findById(id))`, or a service fetching a list and then
+  enriching each element. The fix is a batch query (`WHERE id IN (:ids)`) or a
+  single join projecting both sides — not a fetch strategy.
+- A projection that quietly loads whole entities to build a DTO reintroduces the
+  cost the style exists to avoid; check the query actually selects columns.
+- Watch for a partially-populated DTO: one mapper method should map every field of
+  its target, or callers start hand-patching the gaps at each call site.
+
+Applies to both styles:
+
+- A new `findAll()` on a table that grows unbounded — and in a multi-tenant repo,
+  any query with no tenant predicate at all.
+- Batch loops that flush per row where one statement would do, and per-row
+  `save()` inside a loop over a large collection.
 
 ### Entity mapping
+
+The relationship items here (bidirectional sides, cascade, `orphanRemoval`) exist
+only in style 1. In a scalar-id repo they are unreachable — do not raise them.
 
 - `equals`/`hashCode` on entities: see [core-java.md](core-java.md). Generated IDs
   are null before persist.

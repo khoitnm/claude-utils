@@ -28,6 +28,51 @@ Caching designs differ more than most areas, so before applying any rule below,
 check it against what this cache is actually for. §0 is the question the rest of
 the file depends on.
 
+## Which kind of cache is this?
+
+There is no single correct set of caching rules, because "cache" covers designs
+with opposite constraints. **A rule that is mandatory for one kind is a defect for
+another.** Decide the kind first, from the code — then apply only the rules that
+belong to it. Getting this wrong in either direction is a bad review: demanding a
+size limit on a full-dataset cache is as wrong as accepting an unbounded
+per-request one.
+
+| Kind | Shape in code | Bounded by | What a miss means |
+| --- | --- | --- | --- |
+| **A. Full-dataset preload** | Load the entire table/list once at startup, reload periodically, serve every read from memory | Dataset size — chosen because the team knows the data is small and stays small | "No such row" — the cache is authoritative *while complete* |
+| **B. Lazy per-key** | `@Cacheable`, `LoadingCache`, `computeIfAbsent` — fill on first request, evict under pressure | An explicit `maximumSize`/`maximumWeight` and a TTL | "Not loaded" — must fall through to the source |
+| **C. Distributed shared** | Redis/Hazelcast/Infinispan behind the same API | Server memory policy plus a per-entry TTL | "Not loaded", plus "the cache is down" as a third case |
+| **D. Request- or session-scoped** | A map on a request-scoped bean, a `ThreadLocal`, Hibernate's first-level cache | The lifetime of the request | "Not loaded in this request" |
+
+Most real systems mix them: a full-dataset cache with a per-key fallback for rows
+created since the last reload, or an in-process L1 in front of a distributed L2.
+Say which parts are which, because the rules follow the part, not the class.
+
+### Which rules apply to which kind
+
+| Rule below | A. Full-dataset | B. Lazy per-key | C. Distributed | D. Request-scoped |
+| --- | --- | --- | --- | --- |
+| §2 eviction policy | **N/A** — evicting breaks completeness | Required | Server-side policy | N/A |
+| §3 per-entry TTL / TTI | **N/A** — the reload interval *is* the staleness bound | Required | Required, or the keyspace grows forever | N/A |
+| §4 `maximumSize` | **N/A** — size follows the dataset; instead project its growth (§4) | **Required** | Required | N/A |
+| §6 stampede | One bulk load, so it is the cold-start queue (§8) | Per-key single-flight | Cross-instance single-flight | N/A |
+| §7 negative caching | Decided by completeness, not by TTL | Central question | Central question | Rarely matters |
+| §8 warm-up | **The critical section** | Usually nothing to warm | Usually nothing to warm | N/A |
+| §9 reload / replacement races | **The critical section** | Per-key evict on write | Both layers, plus broadcast | N/A |
+| §11 serialization | N/A | N/A | **Required** | N/A |
+| §12 cache as a dependency | N/A | N/A | **Required** | N/A |
+| §1 key completeness, §5 thread safety, §10 value integrity, §13 security, §14 metrics | Apply to all four | | | |
+
+Kind D has one failure mode of its own worth checking, because it looks safe:
+a per-request cache built on a `ThreadLocal` or a static map on a pooled thread
+outlives the request unless it is cleared in a `finally`, at which point it is
+serving one user's data to the next (§5).
+
+**When the kind is not stated anywhere, say so.** "Is this meant to hold the whole
+table, or just the hot subset?" is a legitimate QUESTION finding — the answer
+determines whether the absence of a size limit is a deliberate design or an
+oversight, and no reviewer can tell those apart from the diff alone.
+
 ## 0. Does this need a cache at all
 
 Ask once, and drop it if the answer is obvious from the diff:
@@ -43,28 +88,24 @@ Ask once, and drop it if the answer is obvious from the diff:
   (Check the repo's data-access rules before proposing a specific query fix — see
   [`persistence-sql.md`](persistence-sql.md).)
 
-### Then, before anything else: what does a miss mean?
+### Then: can a caller trust a miss?
 
-Ask this first, because the answer determines whether half the rules below apply
-at all. A key that is not in the cache means one of two very different things:
-
-| The cached set is | A miss means | Can the caller trust it? |
-| --- | --- | --- |
-| A subset of the data (lazily filled, size-bounded, TTL-evicted) | "not loaded" | No — it must fall through to the source |
-| Deliberately the *whole* set (a full-table snapshot, a fixed enumeration) | "no such row" | Yes, **but only while a complete snapshot exists** |
+The kind tells you what a miss *means*; this tells you what it *costs*.
 
 - Does any caller **write, skip a write, deny access, or return 404** based on a
   miss? Then a wrong miss is a data or authorisation bug, not a latency bug, and
-  every path that can produce an incomplete cache (warm-up §8, failed reload §9,
-  eviction §2) becomes a correctness question.
-- An authoritative whole-set cache must never be partially populated, never
-  size-evicted, and never observable mid-replacement. That is what makes §4's size
-  bound and §2's eviction policy inapplicable to it — and it is a deliberate
-  trade, not an oversight.
-- A subset cache must have a per-key fallback, and then the risk moves to negative
-  caching (§7) and stampede (§6) instead.
-- Mixing the two — a whole-table cache that also caches per-key fallback hits — is
-  fine, but say which keys are authoritative and which are not.
+  every path that can produce an incomplete cache — warm-up (§8), a failed or
+  racing reload (§9), eviction (§2) — becomes a correctness question rather than a
+  performance one.
+- An authoritative cache (kind A) must therefore never be partially populated,
+  never size-evicted, and never observable mid-replacement. Those three
+  constraints are what buy the right to trust a miss.
+- A cache whose miss means "not loaded" (kinds B, C, D) must have a fallback to the
+  source on every read path — and then the risk moves to negative caching (§7) and
+  stampede (§6) instead.
+- In a mixed design, say which keys are authoritative and which are not. A cache
+  that is authoritative for the rows it preloaded and lazy for rows created since
+  is two caches wearing one class name, and each half gets its own rules.
 
 ## 1. Keys — what identifies the value
 
@@ -100,6 +141,9 @@ The highest-yield section. Read every key expression in the diff.
   separate keyspace.
 
 ## 2. Eviction policy — behaviour at capacity
+
+Skip this section for a full-dataset cache (kind A): it has no capacity limit to
+reach, and eviction there would be a bug rather than a policy.
 
 - Is a policy chosen deliberately, and does it match the access pattern? **LRU**
   (recency) is the safe default. **LFU / W-TinyLFU** (Caffeine's `maximumSize`
@@ -154,13 +198,25 @@ The highest-yield section. Read every key expression in the diff.
   mandatory when the key space grows with requests; an unbounded static `Map` keyed
   by anything user-supplied is the classic production `OutOfMemoryError` and a
   **blocker**.
-- The exception is a deliberate whole-set cache (a full-table snapshot, a fixed
-  enumeration): its size follows **table size, not traffic**, and a size limit
-  would break the "we hold every row" guarantee the callers depend on (§0). Do not
-  ask for `maximumSize` there. Ask instead: how many rows today, how many after the
-  biggest plausible tenant onboards, how many copies exist at once during a reload
-  (source list + new map + old snapshot), and does the load time still fit inside
-  the reload interval as the table grows?
+- **A full-dataset cache (kind A) is the exception, and asking it for a
+  `maximumSize` is a wrong finding.** Its size follows **dataset size, not
+  traffic**; a limit would silently break the completeness guarantee its callers
+  depend on, turning a memory question into a correctness one. The design is valid
+  precisely because the team knows the data is small and bounded. What to review
+  instead is whether that premise is written down and still true:
+  - How many rows today, and how many after the largest plausible growth event
+    (a big tenant onboarding, a backfill, a new market)? A cache that is fine at
+    5 000 rows and fatal at 5 000 000 needs the number stated, not implied.
+  - How many copies exist at once during a reload — the source list, the new map,
+    and the old snapshot still serving reads? Peak is a multiple of the steady
+    state.
+  - Does the load still fit inside the reload interval as the dataset grows, and
+    what happens when it does not (§9)?
+  - Is there anything that would *notice* the growth before the OOM — a logged
+    entry count, a size gauge, an alert threshold?
+  - If the premise cannot hold indefinitely, the honest finding is "this design
+    has a documented ceiling; record it and alert before it", not "add
+    `maximumSize`".
 - Is the bound in the right unit? `maximumSize(10_000)` of 2 MB values is 20 GB.
   Values whose size varies by orders of magnitude (documents, result lists, images)
   need `maximumWeight` with a real weigher.
