@@ -67,6 +67,23 @@ Also read **[pr-review-shared/project-context.md](pr-review-shared/project-conte
 — it says when to pull in the reviewed repo's own `CLAUDE.md`, skills, architecture
 docs, and linked requirements, and when that is a waste of context.
 
+## Step 3b — Run the mechanical scan
+
+```bash
+python <skill-dir>/scripts/scan-mechanical-rules.py --pr <number>
+# or: gh pr diff <number> | python <skill-dir>/scripts/scan-mechanical-rules.py
+```
+
+It regex-scans **added diff lines only** — never the existing tree — for the ~24
+rules a script can decide: `var`, mapped associations, `@Enumerated` by ordinal,
+concatenated SQL, empty catch blocks, `.only(` left in a test, `as any`,
+`dangerouslySetInnerHTML`, index-as-key, hardcoded credentials. Spend your own
+attention on the judgement calls instead.
+
+Every hit is a **candidate, not a finding**. Before any of them reaches the PR:
+read it in context, confirm the repo's own rules let you object to it, and drop
+what does not survive. Do not paste the scan output into a review.
+
 ## Step 4 — Review
 
 Work through the loaded checklists against the diff. For every finding:

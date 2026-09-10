@@ -1,0 +1,59 @@
+# pr-review-inline scripts
+
+Two scripts, opposite jobs. Python 3, standard library only.
+
+## scan-mechanical-rules.py — used *during* a review
+
+Regex-scans a PR diff for the rules a script can decide, so the model does not
+carry them in context or spend attention on them.
+
+```bash
+python scripts/scan-mechanical-rules.py --pr 548
+gh pr diff 548 | python scripts/scan-mechanical-rules.py --json
+python scripts/scan-mechanical-rules.py --list        # the rule table
+```
+
+**Added lines only.** It never reads the working tree, so pre-existing code
+cannot produce a hit — a PR is only ever flagged for what it introduces. That is
+the point: these rules would be intolerable as a build gate over a codebase that
+predates them.
+
+Output is **candidates, not findings**. The scan has no context: it cannot see
+that the concatenated SQL takes a constant, that the repo permits `var`, or that
+the credential is a test fixture. Verify each hit before it reaches a PR.
+
+Adding a rule: append to `RULES` as
+`(lang, id, severity, pattern, message)`. The message must say what breaks, not
+just what the pattern is. Use `PATH_GATE` when a pattern is only meaningful in
+certain files. If a rule needs to understand scope, types, or control flow, it
+does not belong here — leave it in the checklist prose for the model.
+
+## lint-checklists.py — used when *editing* the skill
+
+Enforces the structure that keeps the checklists cheap to load and worth
+following.
+
+```bash
+python scripts/lint-checklists.py           # from the skill root
+python scripts/lint-checklists.py --stats   # the token budget table
+python scripts/lint-checklists.py --strict  # warnings fail too
+```
+
+Checks:
+
+| Check | Why | Level |
+| --- | --- | --- |
+| Token budget per file (2500, 1800 for an INDEX, 1600 for SKILL.md) and 50k total | A 12k-token aspect file crowds out every other checklist on any PR that touches its subject | error |
+| Links resolve | A dispatch index that points at a moved file silently stops dispatching | error |
+| No project-specific identifiers (repo names, module names, ticket keys) | The checklists have to work on a repo nobody here has seen | error |
+| Every file is referenced by its INDEX.md or SKILL.md | A file nothing dispatches to is never read | warning |
+| No near-duplicate bullets across files | Two copies of a rule drift apart, and the reviewer raises it twice | warning |
+| No preference-only bullets ("Never X." with no consequence) | The review bar requires naming a concrete failure; a bare preference cannot meet it | warning |
+
+Run it before committing a checklist change. To make that automatic:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+with a `.githooks/pre-commit` that runs the script and exits non-zero on failure.

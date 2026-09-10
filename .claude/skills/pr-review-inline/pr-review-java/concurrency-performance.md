@@ -58,7 +58,7 @@ shared mutable state.
 
 ## Caching
 
-Caching has its own checklist — read **[caching.md](caching.md)** whenever the diff
+Caching has its own checklist — read **[caching/INDEX.md](caching/INDEX.md)** whenever the diff
 adds or changes a cache. The four findings worth remembering without it:
 
 - A key missing the tenant/user/locale leaks one customer's data to another. Blocker.

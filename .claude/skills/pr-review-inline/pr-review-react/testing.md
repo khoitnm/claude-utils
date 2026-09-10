@@ -33,8 +33,9 @@ Vitest, RTL, MSW, Playwright/Cypress).
   asserts before the interaction completes and passes for the wrong reason.
 - `waitFor` should contain **one assertion** and no side effects — it retries the
   callback, so a `userEvent` call inside it runs repeatedly.
-- Never `waitFor` an arbitrary timeout or `setTimeout` a test into passing. Wait
-  for the condition.
+- Never `waitFor` an arbitrary timeout or `setTimeout` a test into passing: it is
+  flaky on a slow CI box and slow on a fast one, and it hides the state change it
+  was supposed to assert. Wait for the condition.
 - `act()` warnings suppressed rather than fixed usually mean a state update the
   test does not know about — often a real bug (an effect updating state after
   unmount).

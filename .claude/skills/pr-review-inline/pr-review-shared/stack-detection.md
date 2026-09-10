@@ -45,7 +45,7 @@ managed dependencies that never appear by name in the child POM.
 | `testcontainers` | Integration-test expectations |
 | `lombok` | Lombok-specific pitfalls |
 | `jackson-databind`, `gson` | Serialization section |
-| `spring-boot-starter-cache`, `spring-context-support`, `@EnableCaching` | Spring cache abstraction section of `pr-review-java/caching.md` |
+| `spring-boot-starter-cache`, `spring-context-support`, `@EnableCaching` | `pr-review-java/caching/spring-cache.md` |
 | `caffeine`, `guava`, `ehcache`, `infinispan` | Local-cache rules: eviction policy, TTL/TTI, weigher, `recordStats` |
 | `spring-boot-starter-data-redis`, `lettuce`, `jedis`, `hazelcast` | Distributed-cache rules: serialization, timeouts, cross-instance invalidation |
 | `resilience4j`, `hystrix` | Resilience section |

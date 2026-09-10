@@ -65,7 +65,9 @@ focus behaviour, announcement, and whether the semantics are actually right.
   so it is not reachable.
 - After a route change, focus should move to the new content or a heading.
 - After deleting a row, focus should land somewhere sensible, not be lost.
-- Do not steal focus on mount for something the user did not initiate.
+- Do not steal focus on mount for something the user did not initiate: it throws a
+  screen-reader user out of the region they were reading, and a keyboard user loses
+  their place in the tab order.
 
 ## Dynamic content and state
 
@@ -94,7 +96,9 @@ focus behaviour, announcement, and whether the semantics are actually right.
   text containers cause clipping.
 - Respect `prefers-reduced-motion` for new animations, especially anything that
   moves or parallaxes.
-- Do not disable pinch zoom in viewport meta.
+- Do not disable pinch zoom in viewport meta (`maximum-scale=1`,
+  `user-scalable=no`) — it leaves a low-vision user with no way to enlarge text,
+  and fails WCAG 1.4.4.
 
 ## Component libraries
 

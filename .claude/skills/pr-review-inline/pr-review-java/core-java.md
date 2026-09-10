@@ -149,8 +149,9 @@ compiler only complains further downstream, if at all.
   padding, and per [`../pr-review-shared/severity-and-output.md`](../pr-review-shared/severity-and-output.md)
   this is a NITPICK unless the inferred type is genuinely unclear at the call site,
   in which case it is an IMPROVEMENT.
-- Never rewrite an explicit type *to* `var` as a "simplification", and never cite
-  verbosity as a reason to prefer it.
+- Never rewrite an explicit type *to* `var` as a "simplification": it deletes
+  information from the diff and buys nothing at runtime. Verbosity is not a
+  reason to prefer it.
 - Long generic types are an argument for a better type, not for `var`: extract a
   named type, a record, or a type alias-style wrapper if the declaration is
   unreadable.
