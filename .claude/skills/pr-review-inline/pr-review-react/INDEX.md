@@ -39,3 +39,10 @@ Before raising a finding that depends on a version or a tool:
 
 If the repo's linters pass in `get_check_runs`, spend the review on what a linter
 cannot see: wrong data, wrong lifecycle, wrong contract.
+
+**Where the repo has its own rules or its own doc on one of these aspects, that
+document wins over the file here, and the finding should cite it.** Look for
+`CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/**` whose `paths:` globs match a
+changed file (frontend rules are commonly scoped that way), custom ESLint rules in
+the repo, and any doc CLAUDE.md `@`-imports. See
+[`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md).

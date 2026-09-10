@@ -1,6 +1,8 @@
-# Shared: posting the review with GitHub MCP Prod
+# Shared: posting the review
 
-All tools below are prefixed `mcp__claude_ai_GitHub-MCP-Prod__`.
+All tools below are prefixed `mcp__claude_ai_GitHub-MCP-Prod__`. If that server is
+unavailable, see "Posting without the MCP server" at the end — do not silently
+downgrade to a single top-level comment without saying so.
 
 ## The sequence
 
@@ -104,6 +106,28 @@ when:
 - A pending review cannot be created (permissions, or the PR is closed).
 
 One comment, the full summary in the body.
+
+## Posting without the MCP server
+
+If the GitHub MCP server is missing or unauthenticated, `gh` can post the same
+review in one call — build the comments as JSON and submit them together:
+
+```bash
+gh api repos/<owner>/<repo>/pulls/<n>/reviews \
+  --method POST -f event=COMMENT -f body="<summary>" \
+  -F 'comments[][path]=src/main/java/com/acme/QuoteService.java' \
+  -F 'comments[][line]=142' -F 'comments[][side]=RIGHT' \
+  -F 'comments[][body]=<finding>'
+```
+
+For more than a couple of findings, write the payload to a file in the scratchpad
+directory and pass it with `--input <file>`. The same anchoring rules apply — the
+line must be inside a diff hunk — and a single bad anchor rejects the **whole**
+request, so on a 422 re-anchor rather than retrying. `gh pr review <n> --comment
+--body "<summary>"` posts summary-only; `gh pr comment` posts a plain PR comment.
+
+Say in the summary which path you used, and confirm before posting exactly as
+above.
 
 ## Dry run
 

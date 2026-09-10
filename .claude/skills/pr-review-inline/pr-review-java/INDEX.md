@@ -26,13 +26,19 @@ For repo conventions, architecture, and requirements, follow
 [`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md) —
 it says when those are worth reading and when they are not.
 
+**Where the repo has its own rules or its own doc on one of these aspects, that
+document wins over the file here, and the finding should cite it.** Look for
+`CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/**` whose `paths:` globs match a
+changed file, and any doc CLAUDE.md `@`-imports. Applying a generic checklist over
+the top of a team's explicit rule is the fastest way to make a review ignorable.
+
 ## Version-gating reminders
 
 Before raising a finding that depends on a language or framework version:
 
 | Do not suggest | Unless |
 | --- | --- |
-| `record`, `switch` expressions, `var`, text blocks, pattern matching | Language level supports it (records: 16+, `var`: 10+, text blocks: 15+, pattern matching for `switch`: 21+) |
+| `record`, `switch` expressions, `var`, text blocks, pattern matching | Language level supports it (records: 16+, `var`: 10+, text blocks: 15+, pattern matching for `switch`: 21+) **and** the repo's style rules do not ban it — several ban `var` outright |
 | Virtual threads, structured concurrency | Java 21+ |
 | `jakarta.*` imports | Spring Boot 3+ / Jakarta EE 9+. On Boot 2 it is `javax.*`. |
 | `SecurityFilterChain` bean style | Spring Security 5.4+; older code uses `WebSecurityConfigurerAdapter` |

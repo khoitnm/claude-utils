@@ -1,13 +1,16 @@
 ---
-name: pr-review
+name: pr-review-inline
 description: >
-  Review a GitHub pull request and post findings back to the PR as inline review
-  comments plus a summary verdict, using the GitHub MCP Prod server. Detects the
-  tech stack of the changed code from the repo's own manifests (pom.xml,
-  build.gradle, package.json) and applies only the checklists that match what
-  actually changed - Java/Spring on the backend, React/TypeScript on the frontend.
-  Use when asked to review a PR, review a pull request, comment on a PR, critique
-  a diff before merge, or re-review a PR after new commits land.
+  Review a GitHub pull request and post the findings back to the PR itself as
+  line-anchored inline review comments plus one summary verdict, via the GitHub
+  MCP server (it does not write a review file to disk). Detects the tech stack of
+  the changed code from the repo's own manifests (pom.xml, build.gradle,
+  package.json) and applies only the checklists that match what actually changed -
+  Java/Spring on the backend, React/TypeScript on the frontend - and defers to the
+  reviewed repo's own CLAUDE.md, .claude/rules, and topic docs where they disagree.
+  Use when asked to review a PR, review a pull request, comment on a PR, post
+  review comments, critique a diff before merge, or re-review a PR after new
+  commits land.
 ---
 
 # PR Review

@@ -13,6 +13,23 @@ Caffeine advice on a Guava repo, or Redis advice on a repo with no Redis, is noi
 A cache is a correctness feature pretending to be a performance feature. Nearly
 every blocker below is a *wrong answer served to a user*, not a slow answer.
 
+## Before this file: does the repo have its own caching doc?
+
+Check for one — `docs/caching/**`, a `*-cache*.md`, a `@`-import from CLAUDE.md, a
+`.claude/rules/**` file whose globs match the changed path. If it exists, **read it
+first and treat it as the specification**; it knows the class names, the incidents,
+and the constraints that make some rule below wrong here. Use this file only for
+what that doc does not cover, and cite the repo's doc in the finding. See
+[`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md).
+
+Two rules below are the ones a house design most often overrides on purpose:
+
+- **§4's "no maximum size is a leak"** does not apply to a deliberate whole-table
+  snapshot cache, where evicting entries would break the "we hold every row"
+  assumption the read path depends on.
+- **§8's "a wrong not-found is a bug"** does not apply where the design has
+  answered what a miss means and made the callers safe under it.
+
 ## 0. Does this need a cache at all
 
 Ask once, and drop it if the answer is obvious from the diff:
@@ -25,6 +42,31 @@ Ask once, and drop it if the answer is obvious from the diff:
   caching bugs become incidents.
 - Is there a cheaper fix: an index, a batch fetch, one query instead of N+1, a
   `LEFT JOIN FETCH`? Prefer removing the load over hiding it.
+- Note that a `LEFT JOIN FETCH` or `@EntityGraph` suggestion is void in a repo
+  whose rules forbid mapped associations — check before suggesting it.
+
+### Then, before anything else: what does a miss mean?
+
+Ask this first, because the answer determines whether half the rules below apply
+at all. A key that is not in the cache means one of two very different things:
+
+| The cached set is | A miss means | Can the caller trust it? |
+| --- | --- | --- |
+| A subset of the data (lazily filled, size-bounded, TTL-evicted) | "not loaded" | No — it must fall through to the source |
+| Deliberately the *whole* set (a full-table snapshot, a fixed enumeration) | "no such row" | Yes, **but only while a complete snapshot exists** |
+
+- Does any caller **write, skip a write, deny access, or return 404** based on a
+  miss? Then a wrong miss is a data or authorisation bug, not a latency bug, and
+  every path that can produce an incomplete cache (warm-up §8, failed reload §9,
+  eviction §2) becomes a correctness question.
+- An authoritative whole-set cache must never be partially populated, never
+  size-evicted, and never observable mid-replacement. That is what makes §4's size
+  bound and §2's eviction policy inapplicable to it — and it is a deliberate
+  trade, not an oversight.
+- A subset cache must have a per-key fallback, and then the risk moves to negative
+  caching (§7) and stampede (§6) instead.
+- Mixing the two — a whole-table cache that also caches per-key fallback hits — is
+  fine, but say which keys are authoritative and which are not.
 
 ## 1. Keys — what identifies the value
 
@@ -86,6 +128,12 @@ The highest-yield section. Read every key expression in the diff.
   change needs a TTL, with or without TTI. TTI alone on mutable data is a finding.
 - Is the TTL derived from a stated business tolerance for staleness, or is it a
   magic `60`? The review question is "how stale may this be, and who decided?"
+- **A periodic full reload is the TTL.** A cache refreshed by a scheduler every
+  five minutes bounds staleness at five minutes (plus the reload duration) without
+  any per-entry TTL, so do not ask for `expireAfterWrite` on top of it. Review the
+  *interval* instead — §9 covers the scheduling traps, and the staleness bound to
+  state is "interval + reload time", measured from the last **success**, not the
+  last attempt.
 - TTL versus the invalidation story: reliable evictions permit a long TTL; no
   invalidation path demands a short one. Long TTL *and* no invalidation is a
   stale-data bug waiting for a support ticket.
@@ -103,10 +151,18 @@ The highest-yield section. Read every key expression in the diff.
 
 ## 4. Size and memory
 
-- **A cache with no maximum size is a memory leak.** `maximumSize` or
-  `maximumWeight` is mandatory unless the key space is a small fixed enumeration.
-  An unbounded static `Map` cache is the classic production `OutOfMemoryError` —
+- **A cache with no maximum size is a memory leak** — *unless the set it holds is
+  bounded by something other than traffic*. `maximumSize` or `maximumWeight` is
+  mandatory when the key space grows with requests; an unbounded static `Map` keyed
+  by anything user-supplied is the classic production `OutOfMemoryError` and a
   **blocker**.
+- The exception is a deliberate whole-set cache (a full-table snapshot, a fixed
+  enumeration): its size follows **table size, not traffic**, and a size limit
+  would break the "we hold every row" guarantee the callers depend on (§0). Do not
+  ask for `maximumSize` there. Ask instead: how many rows today, how many after the
+  biggest plausible tenant onboards, how many copies exist at once during a reload
+  (source list + new map + old snapshot), and does the load time still fit inside
+  the reload interval as the table grows?
 - Is the bound in the right unit? `maximumSize(10_000)` of 2 MB values is 20 GB.
   Values whose size varies by orders of magnitude (documents, result lists, images)
   need `maximumWeight` with a real weigher.
@@ -221,9 +277,19 @@ Each of these is an edge case warm-up PRs routinely miss. Check them all.
 - **Concurrent access while warming.** A request arriving mid-warm-up gets one of:
   block until ready (needs a timeout, or requests queue until the thread pool is
   exhausted), miss through to the source (correct, but warm-up now competes with
-  live traffic for the same dependency), or a wrong "not found" (bug). Whichever it
-  is must be deliberate — and a `CountDownLatch` / `volatile boolean ready` gate has
-  to be checked on *every* read path, not just the one the PR touches.
+  live traffic for the same dependency), or an answer derived from an empty cache.
+  That last one is a bug *only if a caller can trust a miss* (§0) — a design that
+  deliberately reports "not loaded yet" to a caller that then queries the source,
+  or that fails the request loudly, is fine. Whichever it is must be deliberate,
+  and the `CountDownLatch` / `volatile boolean ready` gate has to be checked on
+  *every* read path, not just the one the PR touches.
+- **The queue behind a failed first load.** If N readers block on one load lock and
+  the load fails, does each queued reader then re-run it? Sixteen readers become
+  sixteen full-table queries, each holding a DB connection, and a cheap read turns
+  into a connection-pool outage. The fix is to tell readers already queued behind a
+  failed attempt "still empty" while letting a reader that *arrives after* it retry
+  — trading a stampede for a stall is not a fix either, so check which one the code
+  actually does.
 - **Deadlock and ordering.** Warm-up that touches beans still initialising,
   triggers another cache's warm-up, or waits on a pool created later in the
   lifecycle. Circular warm-up between two caches hangs startup with no error.
@@ -382,6 +448,39 @@ something the database does not.
   mix of old and new: if the values are mutually consistent (rates and rules, ids
   and names), cache them as one immutable snapshot object rather than as independent
   keys.
+- **A reload overwriting a fresher single-entry refresh.** The silent one, and the
+  one reviews miss. Reading the table takes time, so a snapshot is already stale
+  when it is written: reload reads at `10:00:00` → a user renames the row and the
+  write path refreshes that one entry at `10:00:01` → the reload writes its
+  `10:00:00` list at `10:00:03` and the rename disappears from the cache. No error,
+  no warning, healthy metrics; you hear about it as "my change didn't save", and
+  **shortening the interval to reduce staleness makes it more likely**. The fix is
+  either prevention (compare row timestamps/versions before overwriting an entry) or
+  repair (record keys refreshed while a reload was in flight, then re-read them
+  *after* the snapshot is written). If the PR chose repair, check three things:
+  only the **last** reload out may settle the queue (an earlier finisher draining it
+  lets a later `putAll` re-clobber those keys); the repair re-reads must not
+  re-queue themselves; and a *failed* reload wrote nothing, so its queued keys need
+  no repair and must be dropped rather than accumulated while the source is sick.
+- **Deleting entries during a reload.** A reload that removes "anything not in the
+  list I just read" will delete a row created *after* it started reading. It looks
+  like correct clean-up, so nobody notices. Restrict deletion to keys that were
+  present **before** the load began.
+- **Overlapping reloads.** A scheduled tick can overlap a reload triggered by a
+  cold read, or by a previous tick that ran long. Two reloads writing snapshots in
+  an unknown order, both mutating shared repair state, is where the subtle bugs
+  live. Ask what happens when one reload takes longer than the interval.
+- **The reload interval itself.** `@Scheduled` resolves its interval **once, at bean
+  initialisation** — a `fixedRateString = "#{...}"` SpEL expression is evaluated
+  there too, so a config-driven interval still needs a redeploy. To change it at
+  runtime you need a short fixed tick that *checks* whether the configured interval
+  has elapsed (re-reading the config each tick), or a `SchedulingConfigurer` with a
+  `Trigger`. Two traps in the tick approach: an exact `elapsed >= interval`
+  comparison never fires on the intended tick (the tick lands a hair late), and if
+  that tick re-stamps the schedule, every interval silently becomes one tick longer
+  — allow half a tick of slack. And reading configuration every tick is not free:
+  use the narrow accessor, not an aggregate that rebuilds everything and logs a
+  warning per absent value.
 
 ## 10. Value integrity
 
@@ -465,6 +564,22 @@ something the database does not.
   count, load latency (p50/p99), load *failure* count, eviction count, current
   size/weight, and — for a refreshing cache — the age of the newest successful
   refresh.
+- **Hit and miss counts cannot detect staleness.** A complete but hours-old
+  snapshot reports a beautiful hit ratio; so does a cache whose reloads have been
+  failing since midnight. For any periodically refreshed cache the number to alert
+  on is **seconds since the last successful reload** (a gauge), plus the reload
+  itself timed with a `success|failure` outcome tag. Check that this gauge also
+  reads correctly *before* the first load — initialise the "last success" timestamp
+  to the epoch, not to `now()`, or a cache that never loaded reports as perfectly
+  fresh.
+- Ask which failures the design **cannot** detect, and get them written down. Some
+  races (a reload clobbering a fresher entry, §9) cannot be logged without building
+  the same tracking that fixing them requires — so "we will just log it for now" is
+  not the cheaper option it sounds like.
+- Do not substitute log noise for a metric. A WARN inside a health indicator fires
+  on every Kubernetes probe; a WARN for an absent optional config fires on every
+  scheduler tick. Log on state *transitions*; keep steady-state conditions in
+  metrics.
 - Alarm on the ones that mean "silently wrong": hit-ratio collapse (a key change or
   an accidentally disabled cache), a refresh-failure streak, size pinned at maximum
   (undersized), an eviction-rate spike.
@@ -538,3 +653,18 @@ Only if the repo uses `@EnableCaching` / `spring-context-support`.
 - Isolation: a static or context-scoped cache leaking state between test methods
   creates order-dependent tests. Clear it in `@BeforeEach`, or use
   `@DirtiesContext` deliberately.
+
+Four test traps that make a caching test lie rather than fail:
+
+- **An unstubbed mock repository returns an empty list from `findAll()`, and that
+  looks like success** — not like "no call happened". A reload in such a test
+  concludes the table is empty and evicts everything, and the assertion that should
+  have caught it passes.
+- **Re-stubbing a mock that is currently set to throw actually throws.**
+  `when(repo.findAll())` *calls* the method; use `doReturn(...).when(repo)` when a
+  previous stubbing may throw.
+- **Starting N tasks in a loop does not create a race** — the first can finish
+  before the last starts. Release them together from a latch, and run any new
+  multi-threaded test several times before trusting a pass.
+- **Do not `sleep` to test timing.** Keep the time decision in a pure function that
+  takes the instants as arguments, so a test can pass any values.

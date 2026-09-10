@@ -18,17 +18,24 @@ call 404s against the wrong instance.
 
 ## 2. Pull the PR context
 
-Use `mcp__claude_ai_GitHub-MCP-Prod__pull_request_read`:
+Preferred: `mcp__claude_ai_GitHub-MCP-Prod__pull_request_read`. If that server is
+not available in this session (the tool is missing, unauthenticated, or 403s on a
+private repo), fall back to the `gh` CLI rather than stopping — everything except
+posting the review works the same way:
 
-| Need | `method` |
-| --- | --- |
-| Title, body, base/head refs, head SHA, state | `get` |
-| The unified diff | `get_diff` |
-| Changed file list with per-file add/delete counts | `get_files` (paginate, `perPage: 100`) |
-| Commits, to see how the PR evolved | `get_commits` |
-| CI status — a red build changes the review | `get_check_runs` |
-| Existing review threads from earlier rounds | `get_review_comments` |
-| Earlier review summaries | `get_reviews` |
+| Need | MCP `method` | `gh` fallback |
+| --- | --- | --- |
+| Title, body, base/head refs, head SHA, state | `get` | `gh pr view <n> --json title,body,baseRefName,headRefName,headRefOid,state` |
+| The unified diff | `get_diff` | `gh pr diff <n>` |
+| Changed file list with per-file add/delete counts | `get_files` (paginate, `perPage: 100`) | `gh pr view <n> --json files` |
+| Commits, to see how the PR evolved | `get_commits` | `gh pr view <n> --json commits` |
+| CI status — a red build changes the review | `get_check_runs` | `gh pr checks <n>` |
+| Existing review threads from earlier rounds | `get_review_comments` | `gh api repos/<owner>/<repo>/pulls/<n>/comments` |
+| Earlier review summaries | `get_reviews` | `gh api repos/<owner>/<repo>/pulls/<n>/reviews` |
+
+Say which path you used in the summary, and check `gh auth status` before
+concluding a repo is inaccessible. Posting the review has its own fallback — see
+[`github-review.md`](github-review.md).
 
 **The PR diff from the API is the source of truth for what changed.** Do not
 substitute `git diff main...HEAD` — the local checkout may be stale, and the local
@@ -45,7 +52,8 @@ elsewhere, the early return above the hunk, the overload that also needed updati
 - If the repo is checked out locally and the branch matches the PR head SHA, read
   from disk — faster, and it lets you grep.
 - Otherwise use `mcp__claude_ai_GitHub-MCP-Prod__get_file_contents` with
-  `ref: "refs/pull/<number>/head"`.
+  `ref: "refs/pull/<number>/head"`, or without the MCP server
+  `gh api repos/<owner>/<repo>/contents/<path>?ref=<headSha> --jq .content | base64 -d`.
 - Skip generated files, lockfiles, snapshots, and vendored code unless the diff is
   *about* them. Reviewing a regenerated lockfile line by line is waste.
 
