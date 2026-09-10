@@ -1,7 +1,7 @@
 # Java review — dispatch index
 
 Read this table, then read **only** the files whose condition the diff actually
-meets. Do not load all seven for a two-file change.
+meets. Do not load all eight for a two-file change.
 
 Every file is written to be gated on what
 [`../pr-review-shared/stack-detection.md`](../pr-review-shared/stack-detection.md)
@@ -14,7 +14,8 @@ dependency of this repo.
 | **[spring.md](spring.md)** | Touches Spring components: `@Service`, `@Component`, `@Controller`, `@Configuration`, `@Transactional`, bean wiring, `application.yml`, Spring Security config, `@Scheduled`, `@Async`, WebFlux. |
 | **[persistence-sql.md](persistence-sql.md)** | Touches entities, repositories, DAOs, queries (JPQL/SQL/Criteria/MyBatis), migrations (Flyway/Liquibase), `*.sql`, or stored procedures.                                                         |
 | **[api-contracts.md](api-contracts.md)** | Adds or changes an endpoint, request/response DTO (`*Dto.java`), serialized payload, published event (`*Event*.java`), or Transactional Outbox methods (`*OutboxJob*.java`).                     |
-| **[concurrency-performance.md](concurrency-performance.md)** | Touches threads, executors, `@Async`, `CompletableFuture`, `ParallelStream`, reactive chains, caching, shared mutable state, batch jobs, or anything in a hot path.                               |
+| **[concurrency-performance.md](concurrency-performance.md)** | Touches threads, executors, `@Async`, `CompletableFuture`, `ParallelStream`, reactive chains, shared mutable state, batch jobs, or anything in a hot path.                                       |
+| **[caching.md](caching.md)** | Adds or changes a cache — `@Cacheable`/`@CacheEvict`, Caffeine/Guava/Ehcache/Redis/Hazelcast, a cache key, TTL, eviction rule, invalidation path, or warm-up — **or** adds a de facto cache: a static `Map`, a memoised field, reference data loaded once at startup. |
 | **[security.md](security.md)** | Touches authentication, authorization, tenancy, input handling, crypto, file/path handling, deserialization, logging of user data, or dependency versions.                                       |
 | **[testing.md](testing.md)** | Touches any `src/test/**` file, **or** adds production logic with no accompanying test.                                                                                                          |
 

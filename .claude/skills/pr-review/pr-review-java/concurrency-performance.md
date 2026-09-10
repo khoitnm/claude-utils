@@ -58,18 +58,13 @@ shared mutable state.
 
 ## Caching
 
-- Cache key completeness: does it include **everything** the value depends on —
-  tenant, user, locale, permission scope, feature flag? A key missing the tenant
-  leaks one customer's data to another. Blocker.
-- Unbounded cache with no eviction or TTL is a memory leak with extra steps.
-- Cached mutable objects handed to callers who then mutate them, corrupting the
-  cache for everyone.
-- Invalidation: which writes must evict this entry? Find them all — a write path
-  missing an evict is a stale-data bug.
-- Spring `@Cacheable` self-invocation does not go through the proxy (same problem
-  as `@Transactional`).
-- `@Cacheable` on a method whose parameters have no sane `equals`/`hashCode`.
-- Caching a failure or an empty result and thereby making a transient outage sticky.
+Caching has its own checklist — read **[caching.md](caching.md)** whenever the diff
+adds or changes a cache. The four findings worth remembering without it:
+
+- A key missing the tenant/user/locale leaks one customer's data to another. Blocker.
+- An unbounded cache with no eviction or TTL is a memory leak with extra steps.
+- A write path with no matching evict is a stale-data bug.
+- Caching a failure or an empty result makes a transient outage sticky.
 
 ## Hot-path performance
 
