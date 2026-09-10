@@ -1,5 +1,7 @@
 # Java caching — keys and cached values
 
+**Applies to kinds:** A, B, C, D (all of them).
+
 Apply to every caching change. A wrong key or a shared mutable value is a correctness bug, not a performance one.
 
 ## Keys — what identifies the value

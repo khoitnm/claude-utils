@@ -12,11 +12,12 @@ reviewing new code, not for failing a build over a decade of history.
     python scripts/scan-mechanical-rules.py --pr 548          # shells out to gh
     python scripts/scan-mechanical-rules.py --list            # show the rules
 
-Every hit is a **candidate**, not a finding. The scan cannot see context, so
-before reporting anything: confirm the line is what it looks like, check the
-repo's own rules permit the construct you are about to object to, and drop the
-hit if the surrounding code makes it correct. A false positive posted to a PR
-costs more than a missed nitpick.
+Each rule carries its own reasoning in `why`, so the checklist prose does not
+have to repeat it. Every hit is still a **candidate, not a finding**: the scan
+cannot see context, so before reporting anything, confirm the line is what it
+looks like, check the repo's own rules permit the objection, and drop the hit if
+the surrounding code makes it correct. Respect `cap` — a rule that matches
+eleven times is one comment, not eleven.
 """
 
 import argparse
@@ -26,109 +27,200 @@ import re
 import subprocess
 import sys
 
-# path, id, severity, regex, message
-# severity is a hint for triage, not the final verdict — that comes from
-# pr-review-shared/severity-and-output.md after a human-verified read.
+# lang    which file extensions the rule applies to (see EXT)
+# id      stable identifier, used in output and to gate by path
+# severity  triage hint only; the verdict comes from severity-and-output.md
+# cap     most comments this rule may produce in one review
+# pattern regex matched against the added line
+# message the one-line claim
+# why     what the reviewer needs to phrase the comment and pick a severity
 RULES = [
-    # ---- Java -------------------------------------------------------------
-    ("java", "java.var", "nitpick",
-     r"(?<![\w.])var\s+\w+\s*=",
-     "`var` hides the type in the diff and in stack traces; this skill "
-     "prescribes explicit types (pr-review-java/core-java.md)."),
-    ("java", "java.mapped-association", "improvement",
-     r"@(ManyToOne|OneToMany|ManyToMany|OneToOne)\b",
-     "Mapped association added. This skill prescribes a scalar id column plus a "
-     "per-query projection (pr-review-java/persistence-sql.md)."),
-    ("java", "java.enum-ordinal", "blocker",
-     r"@Enumerated\b(?!\s*\(\s*EnumType\s*\.\s*STRING)",
-     "Enum persisted by ordinal (explicitly or by default): reordering the enum "
-     "silently rewrites the meaning of every existing row. Use "
-     "`EnumType.STRING`."),
-    ("java", "java.sql-concat", "blocker",
-     r"\"[^\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM)\b[^\"]*\"\s*\+",
-     "SQL built by string concatenation — injection unless every appended value "
-     "is provably not user input. Bind parameters."),
-    ("java", "java.select-star", "improvement",
-     r"\bSELECT\s+\*",
-     "`SELECT *` breaks when a column is added and fetches more than needed."),
-    ("java", "java.print-stack-trace", "improvement",
-     r"\.printStackTrace\s*\(",
-     "`printStackTrace()` writes outside the log pipeline: no level, no "
-     "correlation id, invisible to log search."),
-    ("java", "java.sysout", "improvement",
-     r"\bSystem\s*\.\s*(out|err)\s*\.\s*print",
-     "`System.out`/`System.err` in application code bypasses logging."),
-    ("java", "java.cached-thread-pool", "improvement",
-     r"Executors\s*\.\s*newCachedThreadPool\s*\(",
-     "`newCachedThreadPool` is unbounded: under load it creates threads until "
-     "the JVM dies. Bound the pool and the queue."),
-    ("java", "java.parallel-stream", "improvement",
-     r"\.parallelStream\s*\(",
-     "`parallelStream` runs on the common ForkJoinPool; one blocking task there "
-     "degrades every other user of it."),
-    ("java", "java.simple-date-format", "improvement",
-     r"new\s+SimpleDateFormat\s*\(",
-     "`SimpleDateFormat` is not thread-safe and is a real bug as a shared "
-     "field. Use `java.time` formatters."),
-    ("java", "java.optional-get", "improvement",
-     r"\.get\s*\(\s*\)\s*;?\s*$",
-     "Possible `Optional.get()` without a presence check — verify the receiver "
-     "type before reporting."),
-    ("java", "java.empty-catch", "blocker",
-     r"catch\s*\([^)]*\)\s*\{\s*\}",
-     "Empty catch block swallows the failure: the caller sees success and the "
-     "cause never reaches a log."),
-    ("java", "java.mybatis-interpolation", "blocker",
-     r"\$\{[^}]+\}",
-     "MyBatis `${}` interpolates directly into SQL. `#{}` binds. On a "
-     "user-controlled value this is injection."),
-    ("java", "java.thread-sleep", "nitpick",
-     r"Thread\s*\.\s*sleep\s*\(",
-     "`Thread.sleep` in a test is flaky on a loaded CI box; in production code "
-     "it usually hides a missing await or a polling loop."),
+    {"lang": "java", "id": "java.var", "severity": "nitpick", "cap": 1,
+     "pattern": r"(?<![\w.])var\s+\w+\s*(?:=|:|\))",
+     "message": "`var` instead of an explicit type.",
+     "why": "This skill prescribes explicit types. A reader of the diff, or of a "
+            "stack trace months from now, should see what the variable is "
+            "without inferring it from the right-hand side. `var` also hides a "
+            "changed return type: a factory that switches from List<Customer> to "
+            "List<CustomerSummary> silently retypes every var that consumed it. "
+            "Ask for the type. NITPICK unless the inferred type is genuinely "
+            "unclear at the call site, then IMPROVEMENT. Anonymous classes and "
+            "intersection types have no denotable name and are the exception. If "
+            "the repo's own rules endorse var, follow the repo."},
 
-    # ---- TypeScript / React ----------------------------------------------
-    ("ts", "ts.console", "nitpick",
-     r"\bconsole\s*\.\s*(log|debug|info)\s*\(",
-     "Leftover console logging ships to users' browsers."),
-    ("ts", "ts.any", "improvement",
-     r":\s*any\b|\bas\s+any\b",
-     "`any` disables checking for everything downstream of it — the errors it "
-     "hides surface far from here."),
-    ("ts", "ts.ts-ignore", "improvement",
-     r"@ts-(ignore|nocheck)",
-     "A suppressed type error stays suppressed after the code around it "
-     "changes. Prefer `@ts-expect-error`, which fails once it is unnecessary."),
-    ("ts", "ts.dangerous-html", "blocker",
-     r"dangerouslySetInnerHTML",
-     "`dangerouslySetInnerHTML` is XSS unless the value is sanitised or "
-     "provably constant."),
-    ("ts", "ts.target-blank", "improvement",
-     r"target=[\"']_blank[\"'](?![^>]*rel=)",
-     "`target=\"_blank\"` without `rel=\"noopener\"` gives the opened page a "
-     "handle on this window."),
-    ("ts", "ts.test-only", "blocker",
-     r"\b(describe|it|test)\s*\.\s*only\s*\(",
-     "`.only` left in a test file silently skips every other test in it — CI "
-     "goes green having run one case."),
-    ("ts", "ts.index-key", "improvement",
-     r"key=\{\s*(index|i|idx)\s*\}",
-     "An array index as `key` makes React reuse the wrong DOM node when the "
-     "list reorders, carrying stale input state with it."),
+    {"lang": "java", "id": "java.mapped-association",
+     "severity": "improvement", "cap": 2,
+     "pattern": r"@(ManyToOne|OneToMany|ManyToMany|OneToOne)\b",
+     "message": "Mapped JPA association added.",
+     "why": "This skill prescribes a scalar id column plus a per-query "
+            "projection, which avoids both fetch strategies rather than choosing "
+            "between them: EAGER drags the association through every load path "
+            "application-wide; LAZY defers the cost to an unpredictable "
+            "dereference and throws LazyInitializationException once the session "
+            "has closed. No fetch strategy fixes either — removing the mapping "
+            "does. Ask for a scalar id plus a @Query with an explicit join "
+            "returning a projection or DTO. See pr-review-java/persistence-sql.md "
+            "for the N+1 shapes that replace it."},
 
-    # ---- any language ----------------------------------------------------
-    ("any", "any.todo", "nitpick",
-     r"\b(TODO|FIXME|XXX|HACK)\b",
-     "A TODO added by this PR: is it tracked anywhere, or is this where it "
-     "dies?"),
-    ("any", "any.debugger", "blocker",
-     r"^\s*debugger\s*;?\s*$",
-     "`debugger` statement left in the diff."),
-    ("any", "any.hardcoded-secret", "blocker",
-     r"(?i)\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*[\"'][^\"']{6,}",
-     "Possible hardcoded credential. Verify it is not a test fixture or a "
-     "placeholder before reporting — but if it is real, it is a blocker and the "
-     "value needs rotating, not just deleting."),
+    {"lang": "java", "id": "java.enum-ordinal", "severity": "blocker", "cap": 3,
+     "pattern": r"@Enumerated\b(?!\s*\(\s*EnumType\s*\.\s*STRING)",
+     "message": "Enum persisted by ordinal, explicitly or by default.",
+     "why": "Reordering or inserting an enum constant silently changes the "
+            "meaning of every row already written. No error, no migration — the "
+            "data just means something else. Use @Enumerated(EnumType.STRING). On "
+            "an existing column that also needs a data migration, so say so."},
+
+    {"lang": "java", "id": "java.sql-concat", "severity": "blocker", "cap": 5,
+     "pattern": r"\"[^\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM)\b[^\"]*\"\s*\+",
+     "message": "SQL built by string concatenation.",
+     "why": "Injection unless every appended value is provably not user input — "
+            "check what reaches the parameter before reporting. Bind parameters "
+            "instead. A blocker when any input is user-controlled, including "
+            "indirectly through a header, a filename, or a sort field."},
+
+    {"lang": "java", "id": "java.select-star", "severity": "improvement",
+     "cap": 3,
+     "pattern": r"\bSELECT\s+\*",
+     "message": "`SELECT *`.",
+     "why": "Breaks silently when a column is added or reordered, fetches more "
+            "than the code needs, and prevents an index-only scan."},
+
+    {"lang": "java", "id": "java.print-stack-trace",
+     "severity": "improvement", "cap": 2,
+     "pattern": r"\.printStackTrace\s*\(",
+     "message": "`printStackTrace()` instead of the logger.",
+     "why": "Writes outside the log pipeline: no level, no correlation id, "
+            "invisible to log search — so the failure is undiscoverable in "
+            "production."},
+
+    {"lang": "java", "id": "java.sysout", "severity": "improvement", "cap": 2,
+     "pattern": r"\bSystem\s*\.\s*(out|err)\s*\.\s*print",
+     "message": "`System.out`/`System.err` in application code.",
+     "why": "Bypasses logging entirely: no level, no structure, no retention."},
+
+    {"lang": "java", "id": "java.cached-thread-pool",
+     "severity": "improvement", "cap": 1,
+     "pattern": r"Executors\s*\.\s*newCachedThreadPool\s*\(",
+     "message": "`newCachedThreadPool` is unbounded.",
+     "why": "Under load it creates threads until the JVM dies, and the queue "
+            "never applies backpressure. Bound the pool and the queue, name the "
+            "threads, set a rejection policy, and shut it down on stop."},
+
+    {"lang": "java", "id": "java.parallel-stream", "severity": "improvement",
+     "cap": 2,
+     "pattern": r"\.parallelStream\s*\(",
+     "message": "`parallelStream` runs on the common ForkJoinPool.",
+     "why": "One blocking task there starves every other user of the pool in the "
+            "JVM. Almost always wrong in request-handling code — and check the "
+            "work is even CPU-bound before accepting it anywhere."},
+
+    {"lang": "java", "id": "java.simple-date-format",
+     "severity": "improvement", "cap": 2,
+     "pattern": r"new\s+SimpleDateFormat\s*\(",
+     "message": "`SimpleDateFormat`.",
+     "why": "Not thread-safe: as a shared or static field it corrupts output "
+            "under concurrency, intermittently and invisibly. java.time "
+            "formatters are immutable."},
+
+    {"lang": "java", "id": "java.optional-get", "severity": "improvement",
+     "cap": 3,
+     "pattern": r"\.get\s*\(\s*\)\s*;?\s*$",
+     "message": "Possible `Optional.get()` with no presence check.",
+     "why": "Verify the receiver is an Optional before reporting — this pattern "
+            "also matches any no-arg getter. If it is one, prefer orElseThrow "
+            "with a meaningful exception."},
+
+    {"lang": "java", "id": "java.empty-catch", "severity": "blocker", "cap": 3,
+     "pattern": r"catch\s*\([^)]*\)\s*\{\s*\}",
+     "message": "Empty catch block.",
+     "why": "The caller sees success, the cause never reaches a log, and the next "
+            "failure on that path is undiagnosable. If the exception really is "
+            "expected, say so in a comment and log at debug."},
+
+    {"lang": "java", "id": "java.mybatis-interpolation",
+     "severity": "blocker", "cap": 5,
+     "pattern": r"\$\{[^}]+\}",
+     "message": "MyBatis `${}` interpolates straight into the SQL.",
+     "why": "`#{}` binds, `${}` concatenates. On any user-controlled value this "
+            "is injection. Legitimate only for a statically-known identifier such "
+            "as a table or column name — and check where that comes from too."},
+
+    {"lang": "java", "id": "java.thread-sleep", "severity": "nitpick", "cap": 2,
+     "pattern": r"Thread\s*\.\s*sleep\s*\(",
+     "message": "`Thread.sleep`.",
+     "why": "In a test it is flaky on a loaded CI box and slow everywhere else — "
+            "wait for the condition. In production code it usually hides a "
+            "missing await, a retry with no backoff, or a polling loop."},
+
+    {"lang": "ts", "id": "ts.console", "severity": "nitpick", "cap": 1,
+     "pattern": r"\bconsole\s*\.\s*(log|debug|info)\s*\(",
+     "message": "Leftover console logging.",
+     "why": "Ships to users' browsers, can leak request or user data into a place "
+            "anyone can read, and clutters the console for the next debugger."},
+
+    {"lang": "ts", "id": "ts.any", "severity": "improvement", "cap": 3,
+     "pattern": r":\s*any\b|\bas\s+any\b",
+     "message": "`any` disables type checking.",
+     "why": "Everything downstream of an `any` is unchecked, so the errors it "
+            "hides surface far from the line that caused them. `unknown` plus a "
+            "narrowing check keeps the safety; a real interface is better still."},
+
+    {"lang": "ts", "id": "ts.ts-ignore", "severity": "improvement", "cap": 2,
+     "pattern": r"@ts-(ignore|nocheck)",
+     "message": "`@ts-ignore` / `@ts-nocheck`.",
+     "why": "Stays suppressed after the surrounding code changes, hiding errors "
+            "nobody chose to accept. `@ts-expect-error` fails the build once it "
+            "is no longer needed, which is the version you want."},
+
+    {"lang": "ts", "id": "ts.dangerous-html", "severity": "blocker", "cap": 2,
+     "pattern": r"dangerouslySetInnerHTML",
+     "message": "`dangerouslySetInnerHTML`.",
+     "why": "XSS unless the value is sanitised or provably constant. Trace where "
+            "the HTML comes from — user input, an API response, and a CMS field "
+            "all count as untrusted."},
+
+    {"lang": "ts", "id": "ts.target-blank", "severity": "improvement", "cap": 2,
+     "pattern": r"target=[\"']_blank[\"'](?![^>]*rel=)",
+     "message": "`target=\"_blank\"` without `rel=\"noopener\"`.",
+     "why": "The opened page gets a handle on this window through window.opener "
+            "and can navigate it elsewhere. Modern browsers imply noopener for "
+            "_blank, so this is milder than it used to be, but the attribute is "
+            "the only guarantee."},
+
+    {"lang": "ts", "id": "ts.test-only", "severity": "blocker", "cap": 1,
+     "pattern": r"\b(describe|it|test)\s*\.\s*only\s*\(",
+     "message": "`.only` left in a test file.",
+     "why": "Every other test in that file silently stops running and CI goes "
+            "green having executed one case. This is how a regression ships after "
+            "the tests 'passed'."},
+
+    {"lang": "ts", "id": "ts.index-key", "severity": "improvement", "cap": 2,
+     "pattern": r"key=\{\s*(index|i|idx)\s*\}",
+     "message": "Array index used as a React `key`.",
+     "why": "On reorder, insert, or delete React reuses the wrong DOM node, so "
+            "input values, focus, and animation state attach to the wrong row. "
+            "Use a stable id from the data. Harmless only for a list that never "
+            "changes order or length."},
+
+    {"lang": "any", "id": "any.todo", "severity": "nitpick", "cap": 1,
+     "pattern": r"\b(TODO|FIXME|XXX|HACK)\b",
+     "message": "TODO/FIXME added by this PR.",
+     "why": "Ask whether it is tracked anywhere. An untracked TODO is a decision "
+            "to forget, and this is the last moment anyone will read it."},
+
+    {"lang": "any", "id": "any.debugger", "severity": "blocker", "cap": 1,
+     "pattern": r"^\s*debugger\s*;?\s*$",
+     "message": "`debugger` statement left in the diff.",
+     "why": "Halts execution for anyone with devtools open."},
+
+    {"lang": "any", "id": "any.hardcoded-secret", "severity": "blocker",
+     "cap": 5,
+     "pattern": r"(?i)\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*"
+                r"[\"'][^\"']{6,}",
+     "message": "Possible hardcoded credential.",
+     "why": "Verify it is not a test fixture or a placeholder before reporting. If "
+            "it is real, deleting the line is not enough: it is in git history and "
+            "needs rotating, and that belongs in the comment."},
 ]
 
 EXT = {
@@ -142,8 +234,8 @@ SKIP = re.compile(
     r"(\.min\.(js|css)|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|"
     r"\.lock|\.snap|\.svg|\.png|\.jpg|\.pdf)$")
 
-# MyBatis interpolation is also valid shell/template syntax; only flag it where
-# SQL actually lives.
+# Some patterns are also valid syntax elsewhere; only look where they mean what
+# the rule says they mean.
 PATH_GATE = {
     "java.mybatis-interpolation": re.compile(r"\.(java|xml|sql)$"),
     "java.select-star": re.compile(r"\.(java|xml|sql|kt)$"),
@@ -171,11 +263,11 @@ def added_lines(diff):
             new_no += 1
 
 
-def applies(rule_lang, rule_id, path):
-    gate = PATH_GATE.get(rule_id)
+def applies(rule, path):
+    gate = PATH_GATE.get(rule["id"])
     if gate and not gate.search(path):
         return False
-    exts = EXT[rule_lang]
+    exts = EXT[rule["lang"]]
     return exts is None or path.endswith(exts)
 
 
@@ -187,19 +279,34 @@ def scan(diff):
         stripped = text.strip()
         if stripped.startswith(("//", "*", "/*", "#")) and "TODO" not in stripped:
             continue                      # comment-only line
-        for lang, rule_id, severity, pattern, message in RULES:
-            if not applies(lang, rule_id, path):
+        for rule in RULES:
+            if not applies(rule, path):
                 continue
-            if re.search(pattern, text):
+            if re.search(rule["pattern"], text):
                 hits.append({
                     "file": path,
                     "line": line_no,
-                    "rule": rule_id,
-                    "severity": severity,
-                    "message": message,
+                    "rule": rule["id"],
+                    "severity": rule["severity"],
+                    "cap": rule["cap"],
+                    "message": rule["message"],
+                    "why": rule["why"],
                     "code": stripped[:160],
                 })
     return hits
+
+
+def wrap(text, width=74, indent=" " * 11):
+    out, line = [], ""
+    for word in text.split():
+        if len(line) + len(word) + 1 > width:
+            out.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    if line:
+        out.append(line)
+    return ("\n" + indent).join(out)
 
 
 def main():
@@ -208,11 +315,14 @@ def main():
     ap.add_argument("--pr", help="PR number; shells out to `gh pr diff`")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list", action="store_true", help="print the rules")
+    ap.add_argument("--brief", action="store_true",
+                    help="omit the reasoning, print one line per hit")
     args = ap.parse_args()
 
     if args.list:
-        for lang, rule_id, severity, pattern, message in RULES:
-            print(f"{rule_id:<32} {severity:<12} [{lang}] {message}")
+        for rule in RULES:
+            print(f"{rule['id']:<32} {rule['severity']:<12} "
+                  f"cap {rule['cap']}  [{rule['lang']}] {rule['message']}")
         return 0
 
     if args.pr:
@@ -236,18 +346,35 @@ def main():
         print("no mechanical-rule hits in the added lines")
         return 0
 
+    counts = {}
+    for h in hits:
+        counts[h["rule"]] = counts.get(h["rule"], 0) + 1
+
     by_file = {}
     for h in hits:
         by_file.setdefault(h["file"], []).append(h)
+
+    shown = {}
     for path in sorted(by_file):
         print(f"\n{path}")
         for h in sorted(by_file[path], key=lambda x: x["line"]):
             print(f"  {h['line']:>5}  {h['severity']:<11} {h['rule']}")
             print(f"         {h['code']}")
-            print(f"         -> {h['message']}")
-    print(f"\n{len(hits)} candidate(s) in {len(by_file)} file(s). "
-          f"Each one is a candidate: verify it in context, check the repo's own "
-          f"rules allow you to object, and drop the ones that do not survive.")
+            print(f"         {h['message']}")
+            seen = shown.get(h["rule"], 0)
+            if not args.brief and seen == 0:
+                print(f"         why: {wrap(h['why'])}")
+            shown[h["rule"]] = seen + 1
+
+    over_cap = [(r, n, next(x["cap"] for x in hits if x["rule"] == r))
+                for r, n in counts.items()
+                if n > next(x["cap"] for x in hits if x["rule"] == r)]
+    print(f"\n{len(hits)} candidate(s) in {len(by_file)} file(s).")
+    for rule_id, n, cap in sorted(over_cap):
+        print(f"  {rule_id}: {n} hits, cap {cap} — raise it once and say it "
+              f"applies in {n} places.")
+    print("Each hit is a candidate: verify it in context, check the repo's own "
+          "rules allow the objection, and drop what does not survive.")
     return 0
 
 

@@ -1,5 +1,7 @@
 # Java caching — tests to ask for
 
+**Applies to kinds:** all. Which tests to insist on depends on the kind.
+
 Apply when the diff adds caching logic, with or without tests.
 
 ## Tests to ask for

@@ -6,9 +6,9 @@ a token budget per file, working links, complete dispatch indexes, no
 project-specific identifiers, no near-duplicate rules across files, and no
 bare style preferences with no stated consequence.
 
-    python scripts/lint-checklists.py            # from the skill root
-    python scripts/lint-checklists.py --strict    # warnings become failures
-    python scripts/lint-checklists.py --stats     # print the budget table only
+    python scripts/lint-skill-docs.py            # from the skill root
+    python scripts/lint-skill-docs.py --strict    # warnings become failures
+    python scripts/lint-skill-docs.py --stats     # print the budget table only
 
 Exit code 1 means a rule was violated. Wire it up with:
     git config core.hooksPath .githooks

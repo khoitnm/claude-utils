@@ -47,24 +47,27 @@ keep even if it says nothing else.
 
 ## Read only what the diff needs
 
-Start with [kinds.md](kinds.md). It decides which files below apply — the rules for
-a full-dataset preload and a lazy per-key cache contradict each other, so applying
-the wrong set produces confident, wrong findings.
+Start with [kinds.md](kinds.md), then obey the **Kinds** column: A = full-dataset
+preload, B = lazy per-key, C = distributed, D = request-scoped. The rules for A and
+B contradict each other on purpose, so a file read against the wrong kind produces
+confident, wrong findings — the `maximumSize` demand on a deliberately unbounded
+full-dataset cache being the classic one. Every file repeats its own gate in its
+first line.
 
-| Read this | When the diff… |
-| --- | --- |
-| **[kinds.md](kinds.md)** | Always. Which of the four kinds this is, which rules that makes N/A, whether a caller can trust a miss, and whether the cache is needed at all. |
-| **[keys-and-values.md](keys-and-values.md)** | Always. Touches a cache key or what is stored. |
-| **[capacity-and-expiry.md](capacity-and-expiry.md)** | Sets or omits a size bound, eviction policy, TTL, or TTI. Skip for a full-dataset cache. |
-| **[concurrency-and-stampede.md](concurrency-and-stampede.md)** | Shares a cache across threads, or loads on a miss. |
-| **[misses-and-failures.md](misses-and-failures.md)** | Decides what happens on a miss, a null, an empty result, or a loader exception. |
-| **[warm-up.md](warm-up.md)** | Loads anything at startup, or gates reads on a "loaded" flag. |
-| **[update-path.md](update-path.md)** | Changes data that is cached, or changes what evicts a key. Transactions and rollback live here. |
-| **[snapshot-reload.md](snapshot-reload.md)** | Replaces the cache contents wholesale, on a timer or on demand. |
-| **[distributed.md](distributed.md)** | Puts the cache out of process — Redis, Hazelcast, Infinispan. |
-| **[operations.md](operations.md)** | Adds a cache at all: security, metrics, kill switch, documented staleness. |
-| **[spring-cache.md](spring-cache.md)** | Uses `@Cacheable`/`@CacheEvict`/`@CachePut`. |
-| **[testing.md](testing.md)** | Adds caching logic, with or without tests. |
+| Read this | Kinds | When the diff… |
+| --- | --- | --- |
+| **[kinds.md](kinds.md)** | all | Always. Which of the four kinds this is, which rules that makes N/A, whether a caller can trust a miss, and whether the cache is needed at all. |
+| **[keys-and-values.md](keys-and-values.md)** | all | Always. Touches a cache key or what is stored. |
+| **[capacity-and-expiry.md](capacity-and-expiry.md)** | **B, C** | Sets or omits a size bound, eviction policy, TTL, or TTI. Skip for a full-dataset cache. |
+| **[concurrency-and-stampede.md](concurrency-and-stampede.md)** | A, B, C | Shares a cache across threads, or loads on a miss. |
+| **[misses-and-failures.md](misses-and-failures.md)** | B, C | Decides what happens on a miss, a null, an empty result, or a loader exception. |
+| **[warm-up.md](warm-up.md)** | **A** | Loads anything at startup, or gates reads on a "loaded" flag. |
+| **[update-path.md](update-path.md)** | A, B, C | Changes data that is cached, or changes what evicts a key. Transactions and rollback live here. |
+| **[snapshot-reload.md](snapshot-reload.md)** | **A** | Replaces the cache contents wholesale, on a timer or on demand. |
+| **[distributed.md](distributed.md)** | **C** | Puts the cache out of process — Redis, Hazelcast, Infinispan. |
+| **[operations.md](operations.md)** | A, B, C | Adds a cache at all: security, metrics, kill switch, documented staleness. |
+| **[spring-cache.md](spring-cache.md)** | B, C | Uses `@Cacheable`/`@CacheEvict`/`@CachePut`. |
+| **[testing.md](testing.md)** | all | Adds caching logic, with or without tests. |
 
 A three-line TTL change needs `kinds.md` and `capacity-and-expiry.md`, not twelve
 files. A new snapshot cache with a scheduled reload needs `kinds.md`, `warm-up.md`,

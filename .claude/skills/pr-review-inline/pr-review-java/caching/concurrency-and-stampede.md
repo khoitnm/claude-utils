@@ -1,5 +1,7 @@
 # Java caching — thread safety and stampede
 
+**Applies to kinds:** A, B, C for thread safety; the stampede half is B and C (kind A's equivalent is the cold-start queue in [warm-up.md](warm-up.md)).
+
 Apply when the cache is shared between threads, which is every singleton-scoped cache.
 
 ## Concurrency and thread safety

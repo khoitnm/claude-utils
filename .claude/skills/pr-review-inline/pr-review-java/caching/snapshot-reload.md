@@ -1,5 +1,7 @@
 # Java caching — reloading and replacing a whole snapshot
 
+**Applies to kinds:** A only, plus any cache that replaces its contents wholesale on a timer.
+
 Applies to a full-dataset cache (see [kinds.md](kinds.md)) and to any cache that
 replaces its contents wholesale on a timer. For per-key invalidation on write, see
 [update-path.md](update-path.md).

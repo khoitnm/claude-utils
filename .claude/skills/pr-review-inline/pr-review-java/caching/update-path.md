@@ -1,5 +1,7 @@
 # Java caching — the update path on write
 
+**Applies to kinds:** A, B, C. Not D.
+
 Apply when the diff changes data that is cached, or changes what evicts a cached key. For a whole-snapshot reload, see [snapshot-reload.md](snapshot-reload.md).
 
 ## The update path — invalidation, transactions, and replacement

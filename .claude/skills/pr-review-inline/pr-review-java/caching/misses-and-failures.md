@@ -1,5 +1,7 @@
 # Java caching — nulls, empties, and failed loads
 
+**Applies to kinds:** B and C mainly. For A, what a miss means is settled by completeness — see [kinds.md](kinds.md).
+
 Apply when the diff decides what happens on a miss, a null, an empty result, or a loader failure.
 
 ## Null, empty, and exception handling

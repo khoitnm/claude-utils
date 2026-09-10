@@ -1,5 +1,7 @@
 # Java caching — the Spring cache abstraction
 
+**Applies to kinds:** B and C, wherever the Spring annotations are the mechanism.
+
 Apply only if the repo uses `@EnableCaching` / `spring-context-support`.
 
 ## Spring cache abstraction specifics

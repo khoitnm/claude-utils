@@ -28,15 +28,15 @@ just what the pattern is. Use `PATH_GATE` when a pattern is only meaningful in
 certain files. If a rule needs to understand scope, types, or control flow, it
 does not belong here — leave it in the checklist prose for the model.
 
-## lint-checklists.py — used when *editing* the skill
+## lint-skill-docs.py — used when *editing* the skill
 
 Enforces the structure that keeps the checklists cheap to load and worth
 following.
 
 ```bash
-python scripts/lint-checklists.py           # from the skill root
-python scripts/lint-checklists.py --stats   # the token budget table
-python scripts/lint-checklists.py --strict  # warnings fail too
+python scripts/lint-skill-docs.py           # from the skill root
+python scripts/lint-skill-docs.py --stats   # the token budget table
+python scripts/lint-skill-docs.py --strict  # warnings fail too
 ```
 
 Checks:
@@ -50,10 +50,21 @@ Checks:
 | No near-duplicate bullets across files | Two copies of a rule drift apart, and the reviewer raises it twice | warning |
 | No preference-only bullets ("Never X." with no consequence) | The review bar requires naming a concrete failure; a bare preference cannot meet it | warning |
 
-Run it before committing a checklist change. To make that automatic:
+## hook-lint-on-edit.py — runs the linter automatically
 
-```bash
-git config core.hooksPath .githooks
-```
+A `PostToolUse` hook (wired in this repo's `.claude/settings.json`, matcher
+`Write|Edit`) that runs the linter whenever a file inside this skill is edited:
 
-with a `.githooks/pre-commit` that runs the script and exits non-zero on failure.
+- edited file is outside the skill → exits 0 without a word
+- linter clean → silent
+- warnings → fed back as context, non-blocking
+- errors → exit 2, so the failure surfaces in the same turn that caused it
+
+This is deliberately an edit-time hook rather than a git `pre-commit` one. The
+mistake gets reported to whoever is editing, while they are still editing,
+instead of at commit time where `--no-verify` walks past it and the context is
+already gone.
+
+It resolves its own path, so it works whether the hook runs with
+`CLAUDE_PROJECT_DIR` set or with the repo root as the working directory, and
+exits silently if it can find neither.

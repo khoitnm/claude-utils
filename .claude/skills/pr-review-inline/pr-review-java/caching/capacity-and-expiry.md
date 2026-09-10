@@ -1,5 +1,7 @@
 # Java caching — eviction, expiry, size and memory
 
+**Applies to kinds:** B and C only. **Not A** — a full-dataset cache has no capacity to reach and its reload interval is its TTL, so a `maximumSize`/TTL finding here is wrong on it. **Not D** — a request-scoped cache dies with the request.
+
 Apply to a size-bounded cache. Mostly N/A for a full-dataset cache — see [kinds.md](kinds.md) before raising anything here.
 
 ## Eviction policy — behaviour at capacity

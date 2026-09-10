@@ -1,5 +1,7 @@
 # Java caching — security, metrics, and operability
 
+**Applies to kinds:** A, B, C. The metrics section is where silent failures get caught, and the metric that matters differs by kind.
+
 Apply to any new cache. The metrics section is where silent caching failures get caught.
 
 ## Security and privacy

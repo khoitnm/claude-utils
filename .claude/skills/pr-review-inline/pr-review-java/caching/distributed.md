@@ -1,5 +1,7 @@
 # Java caching — distributed and persistent caches
 
+**Applies to kinds:** C only.
+
 Apply only when the cache is out of process: Redis, Hazelcast, Infinispan, or anything serialized to disk.
 
 ## Serialization (distributed or persistent caches)

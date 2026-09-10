@@ -1,5 +1,7 @@
 # Java caching — warm-up at startup
 
+**Applies to kinds:** A above all — this is its critical section. Rarely relevant to B or C, which fill on demand.
+
 Apply when the diff adds or changes a load at startup: `@PostConstruct`, `CommandLineRunner`, an `ApplicationReadyEvent` listener, or a first-read-loads guard.
 
 ## Warm-up (first load at startup)

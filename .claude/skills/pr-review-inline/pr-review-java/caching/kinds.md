@@ -1,5 +1,7 @@
 # Java caching — which kind of cache is this
 
+**Applies to:** all kinds — this file is how you decide which one you have.
+
 Read this first. It decides which of the other files apply, and half the rules in them are wrong for the wrong kind.
 
 ## Which kind of cache is this?
