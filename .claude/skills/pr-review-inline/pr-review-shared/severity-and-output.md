@@ -47,6 +47,7 @@ Rules:
 - Suggest a direction, not a rewrite. Use GitHub's ```suggestion blocks only for
   changes that are genuinely one or two lines and unambiguous.
 - No preamble, no "Great work but...". Say the thing.
+- Comment must be concise, short and simple, easy for even junior developer can understand.
 
 ## Summary body (posted once, as the review body)
 
