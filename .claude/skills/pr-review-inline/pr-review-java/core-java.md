@@ -134,8 +134,36 @@ See also [`../pr-review-shared/cross-cutting.md`](../pr-review-shared/cross-cutt
 - `@SneakyThrows` hiding a checked exception from callers.
 - `@EqualsAndHashCode` including a mutable or lazily-loaded field.
 
+## Explicit types, not `var`
+
+**Declare the type. Never suggest `var`, and raise it when the diff introduces
+it.** The point is type-safety at a glance: a reader of the diff, or of a stack
+trace six months from now, can see what a variable is without inferring it from
+the right-hand side or opening the called method. `var` also hides a changed return
+type — a refactor that switches a factory from `List<Customer>` to
+`List<CustomerSummary>` silently retypes every `var` that consumed it, and the
+compiler only complains further downstream, if at all.
+
+- A new `var` declaration: ask for the explicit type. Keep it to **one comment per
+  PR** unless the types differ in kind — a list of eleven identical nitpicks is
+  padding, and per [`../pr-review-shared/severity-and-output.md`](../pr-review-shared/severity-and-output.md)
+  this is a NITPICK unless the inferred type is genuinely unclear at the call site,
+  in which case it is an IMPROVEMENT.
+- Never rewrite an explicit type *to* `var` as a "simplification", and never cite
+  verbosity as a reason to prefer it.
+- Long generic types are an argument for a better type, not for `var`: extract a
+  named type, a record, or a type alias-style wrapper if the declaration is
+  unreadable.
+- The exception the language forces: an anonymous class or an intersection type
+  that has no denotable name. Those are rare; everything else has a type you can
+  write.
+- If the repo's own rules explicitly endorse `var`, follow the repo — the
+  precedence in [`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md)
+  still applies, and it is the repo's codebase.
+
 ## Modern-Java suggestions (gate on the language level)
 
 Only suggest these if `stack-detection.md` confirmed the release supports them, and
 only when they meaningfully improve the changed code — not as a blanket
-modernisation demand on a PR that had another purpose.
+modernisation demand on a PR that had another purpose. `var` is excluded from this
+list regardless of the release — see above.

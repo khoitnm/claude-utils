@@ -10,61 +10,85 @@ be wrong. Read the repo's rules first and follow them; where they ban something
 this file would tune, the finding is the ban. See
 [`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md).
 
+This file takes a position of its own on one question — relationships are scalar
+ids plus per-query projections, never mapped associations (see the next section).
+A repo whose rules say otherwise still wins; the precedence above is unchanged.
+
 ## JPA / Hibernate
+
+### Relationships — scalar ids, not mapped associations
+
+**This skill prescribes one style: model relationships as plain scalar id columns
+(`private long featureId;`) and have each query fetch exactly what it needs via an
+explicit join returning a projection or DTO.** No `@ManyToOne`, `@OneToMany`,
+`@ManyToMany`, or `@OneToOne` — and that means avoiding *both* fetch strategies,
+not choosing between them:
+
+- `EAGER` drags the association into every load of the owning entity, application
+  wide, including the paths this PR never touched, and produces N+1 or cartesian
+  products that no two-row unit test reveals.
+- `LAZY` moves the cost to an unpredictable dereference point and throws
+  `LazyInitializationException` as soon as the proxy is touched outside an open
+  session — near-guaranteed where `spring.jpa.open-in-view` is `false`, since the
+  session then lives only inside an explicit transaction or a single repository
+  call.
+
+Nothing about the fetch *strategy* fixes either problem; removing the mapping does.
+
+So, when the diff adds a mapped association, **the finding is the mapping**, eager
+or lazy. Ask for a scalar id column plus a query that selects the related fields —
+a dedicated `@Query` with an explicit join returning an interface projection or
+DTO, or a second lookup where that is simpler.
 
 ### Fetching — the N+1 section
 
 The most common performance defect in a Java PR, and it never shows up in a unit
-test with two rows. **Which findings are available to you depends on how this repo
-models relationships.** Establish that first — from the rules, or from what the
-existing entities do — because the two styles have different defects and different
-fixes, and a fix from the wrong style will be rejected.
+test with two rows. In the scalar-id style it takes these shapes:
 
-**Style 1 — mapped associations** (`@ManyToOne`, `@OneToMany`, … present on
-entities):
-
-- A new `@ManyToOne`/`@OneToOne` defaults to **EAGER**. Every load of the owning
-  entity now drags in the association, everywhere in the application — not just in
-  the code this PR touched. Prefer `FetchType.LAZY` explicitly.
-- A loop (or a stream `map`) over entities that touches a lazy association issues
-  one query per element. Fix with a `JOIN FETCH`, an `@EntityGraph`, or a batch
-  size.
-- `JOIN FETCH` on two collections in one query produces a cartesian product.
-- Pagination combined with `JOIN FETCH` on a collection makes Hibernate paginate in
-  memory — it logs a warning and loads everything.
-- A lazy association dereferenced outside an open session throws
-  `LazyInitializationException` — likelier where `spring.jpa.open-in-view` is
-  `false`, so the session lives only inside an explicit transaction or a single
-  repository call.
-
-**Style 2 — no mapped associations**: relationships are plain scalar id columns
-(`private long featureId;`), and each query fetches exactly what it needs via an
-explicit join returning a projection or DTO. Repos adopt this deliberately, to
-avoid *both* fetch strategies: no EAGER surprises, no lazy-loading exceptions, no
-fetch-strategy tuning at all. In such a repo:
-
-- **Adding any mapped association is the finding**, eager or lazy. The fix is a
-  scalar id plus a query that selects the related fields.
-- N+1 still exists, in a different shape: a loop calling a repository per id, a
-  `stream().map(id -> repo.findById(id))`, or a service fetching a list and then
-  enriching each element. The fix is a batch query (`WHERE id IN (:ids)`) or a
-  single join projecting both sides — not a fetch strategy.
-- A projection that quietly loads whole entities to build a DTO reintroduces the
-  cost the style exists to avoid; check the query actually selects columns.
-- Watch for a partially-populated DTO: one mapper method should map every field of
-  its target, or callers start hand-patching the gaps at each call site.
-
-Applies to both styles:
-
+- A loop, or a `stream().map(id -> repo.findById(id))`, issuing one query per
+  element. Fix with a batch query (`WHERE id IN (:ids)`) and a lookup map, or a
+  single join projecting both sides.
+- A service that fetches a list and then enriches each element with a per-row call
+  — the same defect wearing a nicer name.
+- A projection or mapper that quietly loads whole entities to build a DTO,
+  reintroducing exactly the cost this style exists to avoid. Check the query
+  selects columns rather than entities.
+- A partially populated DTO: one mapper method should map every field of its
+  target, or callers start hand-patching the gaps at each call site and the gaps
+  drift apart.
+- A join that fans out (one parent, many children) returning duplicated parent
+  rows, then de-duplicated in Java — usually two queries would be cheaper and
+  clearer than one.
 - A new `findAll()` on a table that grows unbounded — and in a multi-tenant repo,
   any query with no tenant predicate at all.
 - Batch loops that flush per row where one statement would do, and per-row
-  `save()` inside a loop over a large collection.
+  `save()` in a loop over a large collection.
+
+### When the code under review already uses mapped associations
+
+Plenty of repos are built on associations, and a PR touching that code cannot be
+reviewed by repeating the rule above at every line. Do not re-litigate the
+architecture in an unrelated PR: raise the style once, at most, and only where the
+diff *adds* a mapping. Then review what is actually there, on its own terms:
+
+- A new `@ManyToOne`/`@OneToOne` defaults to `EAGER` — if the mapping stays, it
+  needs an explicit `FetchType.LAZY`.
+- A lazy association touched in a loop is one query per element: `JOIN FETCH`, an
+  `@EntityGraph`, or a batch size.
+- `JOIN FETCH` on two collections in one query produces a cartesian product.
+- Pagination plus `JOIN FETCH` on a collection makes Hibernate paginate in memory —
+  it warns, then loads everything.
+- A lazy proxy dereferenced outside the session throws
+  `LazyInitializationException`.
+
+A concrete defect in the code as written is worth more than a correct opinion the
+author cannot act on in this PR.
 
 ### Entity mapping
 
-The relationship items here (bidirectional sides, cascade, `orphanRemoval`) exist
-only in style 1. In a scalar-id repo they are unreachable — do not raise them.
+The relationship items here (bidirectional sides, cascade, `orphanRemoval`) apply
+only to code that already uses mapped associations. In a scalar-id codebase they
+are unreachable — do not raise them.
 
 - `equals`/`hashCode` on entities: see [core-java.md](core-java.md). Generated IDs
   are null before persist.

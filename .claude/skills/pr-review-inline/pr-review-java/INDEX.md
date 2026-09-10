@@ -38,7 +38,8 @@ Before raising a finding that depends on a language or framework version:
 
 | Do not suggest | Unless |
 | --- | --- |
-| `record`, `switch` expressions, `var`, text blocks, pattern matching | Language level supports it (records: 16+, `var`: 10+, text blocks: 15+, pattern matching for `switch`: 21+) **and** the repo's own style rules permit it |
+| `record`, `switch` expressions, text blocks, pattern matching | Language level supports it (records: 16+, text blocks: 15+, pattern matching for `switch`: 21+) **and** the repo's own style rules permit it |
+| `var` | **Never suggest it.** This skill prescribes explicit types — see [core-java.md](core-java.md). |
 | Virtual threads, structured concurrency | Java 21+ |
 | `jakarta.*` imports | Spring Boot 3+ / Jakarta EE 9+. On Boot 2 it is `javax.*`. |
 | `SecurityFilterChain` bean style | Spring Security 5.4+; older code uses `WebSecurityConfigurerAdapter` |
