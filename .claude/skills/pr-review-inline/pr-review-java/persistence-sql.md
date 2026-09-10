@@ -4,20 +4,10 @@ Apply the subsections whose technology is actually a dependency. A MyBatis repo
 gets nothing from the Hibernate section.
 
 **Check the repo's data-access rules before writing any finding here.** This is the
-area teams most often constrain deliberately, and where a generic finding is most
-likely to be wrong. Where a repo bans a construct, **the finding is the ban, not
-the tuning advice**:
-
-- Some repos forbid mapped associations entirely (`@ManyToOne`, `@OneToMany`,
-  `@ManyToOne`, `@OneToOne` — eager *or* lazy) and require a scalar id column plus
-  a query-specific projection. In such a repo, "make it `LAZY` and add a
-  `JOIN FETCH`" is the wrong comment; adding the association at all is the finding,
-  and the whole N+1 section below has to be re-read in terms of projections.
-- Others mandate `@Query`/JPQL over derived query methods, ban `findAll` in favour
-  of tenant-scoped variants, or fix the migration file naming. Cite the rule file.
-
-Where to look: `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/**` matching the
-changed path, and any doc CLAUDE.md `@`-imports — see
+area teams most often constrain deliberately — which mappings, query styles, and
+repository methods are allowed — so it is where a generic finding is most likely to
+be wrong. Read the repo's rules first and follow them; where they ban something
+this file would tune, the finding is the ban. See
 [`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md).
 
 ## JPA / Hibernate

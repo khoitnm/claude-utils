@@ -24,14 +24,14 @@ a PR with the *reviewing* repo's conventions is worse than reviewing it with non
 | Source | Why |
 | --- | --- |
 | `CLAUDE.md` / `AGENTS.md` at the repo root, **or** `.claude/CLAUDE.md` | The project's own conventions. Either location is normal; check both. A finding that contradicts it is wrong; a violation of it is a legitimate finding, and citing the rule makes it uncontestable. |
-| Files that CLAUDE.md `@`-imports | A line like `@docs/naming-convention.md` or `@docs/caching/in-memory-dataset-caches.md` is part of the instructions, not a reading suggestion. Follow the ones whose subject the diff touches — that is usually where the real, hard-won rules are. |
-| `.claude/rules/**` | A common convention for path-scoped rules (`paths:` frontmatter listing globs such as `sc-api/src/**`). Read every rule file whose globs match a changed file. These are frequently more specific and more binding than CLAUDE.md itself. |
+| Files that CLAUDE.md `@`-imports | A line like `@docs/<topic>.md` is part of the instructions, not a reading suggestion. Follow the ones whose subject the diff touches — that is usually where the real, hard-won rules are. |
+| `.claude/rules/**` | A common convention for path-scoped rules (`paths:` frontmatter listing globs such as `<module>/src/**`). Read every rule file whose globs match a changed file. These are frequently more specific and more binding than CLAUDE.md itself. |
 | Nested `CLAUDE.md` in a changed directory or module | Module-specific rules override root ones. |
 | `README.md` of the changed module | Tells you what the module is for, which is what "correct" means here. |
 
 In a multi-module repo, resolve these per changed file, the same way
-[`stack-detection.md`](stack-detection.md) resolves manifests: the rules that apply
-to `sc-api/src/**` may say nothing about a change under `sc-app/src/**`.
+[`stack-detection.md`](stack-detection.md) resolves manifests: the rules scoped to
+one module may say nothing about a change in another.
 
 ## Read when the diff meets the condition
 
@@ -63,20 +63,17 @@ repo wins — and say so rather than silently dropping the item, because a conve
 that produces bad code is itself worth one comment (once, in the summary, not on
 every occurrence).
 
-Two conflicts that show up constantly, both worth checking before you write a
-Java finding:
+Two shapes of conflict to expect. Neither needs a list of examples — the repo's
+own rules tell you which constructs and idioms are in play:
 
-- The repo bans a construct this skill would otherwise suggest — `var`, records,
-  JPA relationship mappings, Lombok, field injection. **Where a repo bans a
-  construct, the finding is the ban, not the tuning advice.** Do not suggest
-  `LAZY` + `JOIN FETCH` in a repo whose rules say "never map associations"; the
-  finding there is "this adds a mapped association, which
-  `.claude/rules/...` forbids — use a scalar id and a projection".
-- The repo's testing rules and this skill's testing advice disagree about
-  interaction assertions (`verify(times(1))` vs "assert on data, not on calls").
-  Follow the repo — but note that a call-count assertion is sometimes the *only*
-  thing that can express the requirement (one query for a burst of readers, one
-  load per key). If the repo's own docs carve that exception out, cite the carve-out.
+- **The repo bans something these checklists would otherwise suggest.** Where a
+  repo bans a construct, the finding is the ban, not the tuning advice: comment on
+  the fact that the diff uses the forbidden construct, name the rule, and point at
+  the alternative the rule prescribes. Never suggest tuning something the repo
+  does not permit in the first place.
+- **The repo prescribes a different idiom for the same goal** — a mandated query
+  style, a mandated test-assertion style, a required base class. Follow the repo's
+  idiom, and phrase the finding in it.
 
 ## When the repo has its own doc on the aspect
 
@@ -90,9 +87,8 @@ constraints; this skill knows only the general shape.
    blocker. Assume the repo doc's exception is deliberate unless the diff shows the
    author did not know about it.
 3. Use these checklists only for what the repo's doc does not cover.
-4. Cite the repo's doc in the finding (`docs/caching/in-memory-dataset-caches.md`
-   §4), not this skill. A finding anchored to the team's own document does not get
-   argued with.
+4. Cite the repo's doc in the finding — its path and section, not this skill. A
+   finding anchored to the team's own document does not get argued with.
 5. If the diff clearly violates that doc, say which section. If the diff reveals a
    gap in the doc, say that once in the summary — updating it is often the more
    valuable follow-up than the code comment.

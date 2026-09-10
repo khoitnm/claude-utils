@@ -2,14 +2,13 @@
 
 Applies to any `.java` change.
 
-Language-feature suggestions are gated twice: by the language level (see
-[`INDEX.md`](INDEX.md)) **and** by the repo's own style rules. Plenty of repos ban
-constructs this file would otherwise recommend — `var`, records, Lombok, wildcard
-imports, field injection, `Optional` in fields. Where a repo bans a construct, the
-finding is the ban, not the recommendation: check `CLAUDE.md`, `.claude/CLAUDE.md`,
-and `.claude/rules/**` matching the changed path before suggesting one. A style
-suggestion that contradicts the team's documented rule costs the whole review its
-credibility.
+Language-feature and style suggestions are gated twice: by the language level (see
+[`INDEX.md`](INDEX.md)) **and** by the repo's own style rules, which may forbid a
+construct this file would otherwise recommend. Read those rules before suggesting
+one — see
+[`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md).
+A style suggestion that contradicts the team's documented rule costs the whole
+review its credibility.
 
 ## Nullability
 

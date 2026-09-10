@@ -18,17 +18,15 @@ every blocker below is a *wrong answer served to a user*, not a slow answer.
 Check for one — `docs/caching/**`, a `*-cache*.md`, a `@`-import from CLAUDE.md, a
 `.claude/rules/**` file whose globs match the changed path. If it exists, **read it
 first and treat it as the specification**; it knows the class names, the incidents,
-and the constraints that make some rule below wrong here. Use this file only for
-what that doc does not cover, and cite the repo's doc in the finding. See
+and the constraints that make some rule below wrong here. Where the two disagree,
+the repo's doc wins — including where it forbids something below or permits
+something below calls a blocker. Use this file only for what that doc does not
+cover, and cite the repo's doc in the finding. See
 [`../pr-review-shared/project-context.md`](../pr-review-shared/project-context.md).
 
-Two rules below are the ones a house design most often overrides on purpose:
-
-- **§4's "no maximum size is a leak"** does not apply to a deliberate whole-table
-  snapshot cache, where evicting entries would break the "we hold every row"
-  assumption the read path depends on.
-- **§8's "a wrong not-found is a bug"** does not apply where the design has
-  answered what a miss means and made the callers safe under it.
+Caching designs differ more than most areas, so before applying any rule below,
+check it against what this cache is actually for. §0 is the question the rest of
+the file depends on.
 
 ## 0. Does this need a cache at all
 
@@ -42,8 +40,8 @@ Ask once, and drop it if the answer is obvious from the diff:
   caching bugs become incidents.
 - Is there a cheaper fix: an index, a batch fetch, one query instead of N+1, a
   `LEFT JOIN FETCH`? Prefer removing the load over hiding it.
-- Note that a `LEFT JOIN FETCH` or `@EntityGraph` suggestion is void in a repo
-  whose rules forbid mapped associations — check before suggesting it.
+  (Check the repo's data-access rules before proposing a specific query fix — see
+  [`persistence-sql.md`](persistence-sql.md).)
 
 ### Then, before anything else: what does a miss mean?
 
