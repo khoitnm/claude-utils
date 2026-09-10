@@ -49,8 +49,22 @@ in a PR is that it does not fully do what its own description claims.
 Diff hunks hide the context that makes a change wrong: the field initialised
 elsewhere, the early return above the hunk, the overload that also needed updating.
 
-- If the repo is checked out locally and the branch matches the PR head SHA, read
-  from disk — faster, and it lets you grep.
+Reading from a local checkout is faster than one MCP call per file and lets you
+grep, which step 5 depends on. Ask the script whether that is available:
+
+```bash
+python <skill-dir>/scripts/prepare-local-checkout.py --pr <number> --repo-dir <clone>
+```
+
+It prints `status ready` and a `path` once the files on disk are verified to be
+the PR head — either the current checkout, or a detached worktree it adds beside
+the clone. **Read from the `path` it prints, not from the clone you started in**,
+and treat `status not-ready` as the signal to use the MCP fallback below rather
+than reading a stale tree. It never switches a branch or discards a change unless
+asked with `--in-place`, so it is safe to run against a clone someone is working
+in. Add `--cleanup` when the review is done.
+
+- Local checkout, per the script's `path` — read from disk and grep freely.
 - Otherwise use `mcp__claude_ai_GitHub-MCP-Prod__get_file_contents` with
   `ref: "refs/pull/<number>/head"`, or without the MCP server
   `gh api repos/<owner>/<repo>/contents/<path>?ref=<headSha> --jq .content | base64 -d`.

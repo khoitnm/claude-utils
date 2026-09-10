@@ -37,6 +37,10 @@ through the GitHub MCP server, reading changed files in full, tracing internal
 imports two levels deep, and picking up prior review rounds so a re-review does
 not re-litigate settled findings.
 
+To read the changed files from disk instead of one MCP call each, run
+`python <skill-dir>/scripts/prepare-local-checkout.py --pr <number> --repo-dir <clone>`
+and use the `path` it prints. It is safe against a clone with work in progress.
+
 ## Step 2 — Detect the stack
 
 Read **[pr-review-shared/stack-detection.md](pr-review-shared/stack-detection.md)** and follow it.

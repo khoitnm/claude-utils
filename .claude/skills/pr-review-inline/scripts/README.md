@@ -1,6 +1,34 @@
 # pr-review-inline scripts
 
-Two scripts, opposite jobs. Python 3, standard library only.
+Python 3, standard library only. Two are used during a review, one when editing
+the skill, one as an edit-time hook.
+
+## prepare-local-checkout.py — used *before* a review
+
+Puts the PR head on disk so changed files can be read locally instead of one
+MCP call per file, and so `grep` works for finding the sibling change that was
+missed.
+
+```bash
+python scripts/prepare-local-checkout.py --pr 548 --repo-dir ../some-clone
+python scripts/prepare-local-checkout.py https://github.com/o/r/pull/548
+python scripts/prepare-local-checkout.py --pr 548 --check      # report only
+python scripts/prepare-local-checkout.py --pr 548 --in-place   # move this checkout
+python scripts/prepare-local-checkout.py --pr 548 --cleanup
+```
+
+It reports `status ready` with a `path` only when the tree there is verified to
+be `refs/pull/<n>/head`. Anything else is `not-ready` with a reason and exit 3 —
+the review then reads files through the GitHub MCP server instead. A **dirty
+tree is never ready**, even at the right SHA: uncommitted edits mean the files
+are not the PR's.
+
+By default it adds a detached worktree in `../.pr-review/<repo>-pr-<n>` rather
+than touching the clone, because a reviewer's main checkout usually has work in
+it. Outside the repo, so the second copy stays out of its status and its IDE
+indexing. Re-running updates the worktree when new commits land, which is what a
+re-review needs. It refuses to move or delete a tree with uncommitted changes,
+and `--in-place` refuses on a dirty clone rather than stashing behind your back.
 
 ## scan-mechanical-rules.py — used *during* a review
 
