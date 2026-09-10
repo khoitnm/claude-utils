@@ -1,5 +1,5 @@
 ---
-name: pr-review-inline
+name: review
 description: >
   Review a GitHub pull request and post the findings back to the PR itself as
   line-anchored inline review comments plus one summary verdict, via the GitHub

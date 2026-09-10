@@ -1,0 +1,14 @@
+{
+  "name": "claude-utils",
+  "owner": {
+    "name": "Khoi (Kevin) Tran"
+  },
+  "description": "Personal Claude Code utilities by Khoi (Kevin) Tran",
+  "plugins": [
+    {
+      "name": "pr-review-inline",
+      "source": "./plugins/pr-review-inline",
+      "description": "Principal-engineer PR review posted back to the PR as inline comments — stack-detected Java/Spring and React/TypeScript checklists, deferring to the reviewed repo's own rules"
+    }
+  ]
+}

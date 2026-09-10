@@ -1,0 +1,18 @@
+{
+  "name": "pr-review-inline",
+  "version": "1.0.0",
+  "description": "Reviews a GitHub pull request against stack-appropriate checklists and posts the findings back to the PR as line-anchored inline comments plus one summary verdict.",
+  "author": {
+    "name": "Khoi (Kevin) Tran"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "code-review",
+    "pull-request",
+    "github",
+    "java",
+    "spring",
+    "react",
+    "typescript"
+  ]
+}
