@@ -64,49 +64,16 @@ test with two rows. In the scalar-id style it takes these shapes:
 - Batch loops that flush per row where one statement would do, and per-row
   `save()` in a loop over a large collection.
 
-### When the code under review already uses mapped associations
-
-Plenty of repos are built on associations, and a PR touching that code cannot be
-reviewed by repeating the rule above at every line. Do not re-litigate the
-architecture in an unrelated PR: raise the style once, at most, and only where the
-diff *adds* a mapping. Then review what is actually there, on its own terms:
-
-- A new `@ManyToOne`/`@OneToOne` defaults to `EAGER` — if the mapping stays, it
-  needs an explicit `FetchType.LAZY`.
-- A lazy association touched in a loop is one query per element: `JOIN FETCH`, an
-  `@EntityGraph`, or a batch size.
-- `JOIN FETCH` on two collections in one query produces a cartesian product.
-- Pagination plus `JOIN FETCH` on a collection makes Hibernate paginate in memory —
-  it warns, then loads everything.
-- A lazy proxy dereferenced outside the session throws
-  `LazyInitializationException`.
-
-A concrete defect in the code as written is worth more than a correct opinion the
-author cannot act on in this PR.
-
 ### Entity mapping
-
-The relationship items here (bidirectional sides, cascade, `orphanRemoval`) apply
-only to code that already uses mapped associations. In a scalar-id codebase they
-are unreachable — do not raise them.
 
 - `equals`/`hashCode` on entities: see [core-java.md](core-java.md). Generated IDs
   are null before persist.
-- `@Data`/`@ToString` from Lombok on an entity triggers lazy loads and can recurse
-  on bidirectional relationships.
-- Bidirectional relations need both sides maintained; setting only the inverse side
-  does not persist the change.
-- `CascadeType.ALL` / `REMOVE` on a `@ManyToOne` deletes the parent when a child
-  goes. Almost never intended.
-- `orphanRemoval = true` combined with replacing the whole collection.
 - Missing `@Version` where concurrent updates are possible — last write silently
   wins.
 - New column: nullable in the DB but non-null in the entity (or vice versa),
   wrong length, wrong precision for a decimal.
 - Enum persisted with the default `ORDINAL` — reordering the enum silently
   corrupts every existing row. Should be `@Enumerated(EnumType.STRING)`.
-- `LAZY` on a field accessed after the session closes → `LazyInitializationException`
-  in production, often only for one code path.
 - `@Transient` vs the JPA/Spring annotation confusion.
 
 ### Queries
