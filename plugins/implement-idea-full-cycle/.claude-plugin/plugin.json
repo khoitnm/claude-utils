@@ -1,0 +1,17 @@
+{
+  "name": "implement-idea-full-cycle",
+  "version": "1.0.0",
+  "description": "Runs an idea all the way to a reviewed pull request unattended: delegates the ticket and implementation to a project skill, then reviews the PR and acts on the review in two fresh contexts, verifying both against git rather than trusting their reports.",
+  "author": {
+    "name": "Khoi (Kevin) Tran"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "pull-request",
+    "code-review",
+    "automation",
+    "unattended",
+    "subagent",
+    "github"
+  ]
+}
