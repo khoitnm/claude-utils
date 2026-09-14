@@ -30,12 +30,18 @@ resolver accepts — `./` or `./some/dir`, not a bare `C:\...`.
 
 **A skill that takes an idea to an open PR.** Filing a ticket in your tracker,
 branching off your base branch and running your test command are all things a
-general-purpose plugin cannot know, so this one delegates them:
+general-purpose plugin cannot know, so this one delegates them — it names no
+tracker, no branch and no test runner anywhere:
 
 ```
-/implement-idea-full-cycle:idea-to-reviewed-pr --implement-with your-ticket-to-pr-skill
+/implement-idea-full-cycle:idea-to-reviewed-pr --implement-with create-ticket-and-implement
    Make the nightly cleanup job log one summary per run instead of a line per row
 ```
+
+Here `create-ticket-and-implement` is a skill in the project being worked on, and
+it is the only thing that knows the tracker is JIRA, that tickets are `PROJ-…`,
+that PRs target `dev` and that tests run with `mvn test`. The plugin just carries
+the ticket key through to the report.
 
 With no `--implement-with`, it looks for a project skill whose description covers
 the ticket-to-PR round trip, and **stops rather than guessing** if there is more
