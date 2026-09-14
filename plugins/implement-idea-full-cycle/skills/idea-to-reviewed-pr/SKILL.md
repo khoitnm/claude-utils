@@ -1,6 +1,6 @@
 ---
 name: idea-to-reviewed-pr
-description: Take an idea — a sentence, a paragraph, or a bug report with its error text — to a reviewed pull request with no questions asked. Files the tracker ticket, implements it, opens the PR, waits for the bot reviewers, then has a clean-context reviewer post inline findings and a second clean-context agent fix and reply to them. One review round, then it stops. Use when the developer explicitly asks for the full unattended ticket-to-reviewed-PR cycle.
+description: Take an idea — a sentence, a paragraph, or a bug report with its error text — to a reviewed pull request with no questions asked. Files the tracker ticket, or reuses the one the input already names, implements it, opens the PR, waits for the bot reviewers, then has a clean-context reviewer post inline findings and a second clean-context agent fix and reply to them. One review round, then it stops. Use when the developer explicitly asks for the full unattended ticket-to-reviewed-PR cycle.
 disable-model-invocation: true
 allowed-tools: Read, Edit, Write, Grep, Glob, Bash, ToolSearch, Skill, Agent
 ---
@@ -15,6 +15,9 @@ There is no length limit, and more detail is better rather than worse — every 
 assumption this run records in the PR body instead of asking about. What the input should *not*
 be is the implementation plan: name the problem or the behaviour you want, and let Step 1 read the
 codebase to work out where it lives.
+
+The idea may already be filed — a ticket key, a tracker URL, or prose saying so. Then **this run
+files nothing**: see [When the idea already has a ticket](#when-the-idea-already-has-a-ticket).
 
 This skill is an orchestrator and almost nothing else. Three other skills hold all the judgement;
 this one runs them in order, isolates two of them in fresh contexts, verifies what they claim, and
@@ -73,6 +76,51 @@ anywhere — the run just stops looking busy. If Claude Code is prompting for ed
 say so once, up front (`/permissions` → *Accept edits*, or launch with
 `--dangerously-skip-permissions`), then carry on.
 
+## When the idea already has a ticket
+
+Often the idea is already filed and the developer just wants the rest of the cycle run. **Then
+this run files nothing** — no new ticket, and no ticket-creation skill invoked at all. Reuse the
+key that was given; Step 1 still does everything else.
+
+**Only the ticket is reused. The branch, the commits and the PR are all new**, cut off the base
+branch exactly as on a fresh run — a supplied key shortens Step 1 by one step and changes nothing
+else about it. The branch is still named from the key plus a fresh short suffix, so the commits and
+the PR link back to the ticket the normal way.
+
+Take the key from the first of these the input offers:
+
+- `--ticket <key>` in the invocation.
+- A tracker URL — the key is its last path segment (`…/browse/PROJ-1234` → `PROJ-1234`).
+- A bare key in the prose, in whatever shape this project's tickets take (`PROJ-1234`).
+
+A key mentioned as background — *"same class `PROJ-1120` touched last sprint"* — is not the ticket
+for this idea. What makes it the ticket is the input saying so: *filed as*, *the ticket for this
+is*, *implement `PROJ-1234`*. When both readings are plausible, treat the ticket as existing: that
+wrong guess costs a reused ticket the developer can retitle, and the opposite one costs a duplicate
+someone has to hunt down and close.
+
+**If the input says a ticket exists but names no key, stop** — [stop
+conditions](#stop-conditions). Filing one contradicts the input, and no key means nothing to name
+the branch, the commits or the PR title after.
+
+### A reused ticket may already have a branch
+
+Step 0 asks about the branch you are standing on, not about the ticket — so it reports `FRESH_RUN`
+from the base branch even when the supplied ticket was worked on before and already has a branch
+and an open PR. A ticket old enough to be handed back to you is exactly the ticket that might.
+
+That gap is covered where it shows up: a ticket-to-PR skill worth delegating to refuses to branch
+when the name it wants already exists locally or on origin, so Step 1 stops there instead of
+silently building on someone's work. **Let it stop, and do not retry with a different suffix.** Two
+things produce that collision and the developer picks between them, not this run:
+
+- **An earlier attempt at this same work.** Resuming is one command — check out that branch,
+  re-run this skill, and Step 0 reports `RESUME` and skips Step 1 altogether.
+- **Someone else already working the ticket.** A second branch and a second PR against one ticket
+  is the duplicate-work version of the duplicate ticket this whole section avoids.
+
+Report which branch name collided, since that is what the developer needs in order to choose.
+
 ## Step 0 — Is this a fresh run or a resumed one?
 
 ```bash
@@ -82,6 +130,9 @@ python <skill-dir>/scripts/pr_state.py "$(git branch --show-current)"
 Step 1 is **not idempotent**: it files a tracker ticket. Re-running a run that died after Step 1
 files a second ticket for the same idea and then fails to branch, so the cost of not asking is a
 duplicate ticket someone has to close by hand. One cheap call rules it out.
+
+Run this even when the ticket was supplied. The duplicate-ticket risk is gone in that case, but
+the branch and the PR are still there from the first attempt, and Step 1 would trip over both.
 
 The base branch is read from GitHub's own default branch for the repo. Pass `--base <ref>` when
 the project merges somewhere else — a repo whose PRs target `develop` while its default branch is
@@ -105,12 +156,43 @@ off the branch name or the PR title rather than re-deriving it from anything.
 Invoke the project's ticket-to-PR skill with the idea, unchanged. It owns the ticket, the branch,
 the implementation, the tests and the PR.
 
+**With a key from [the section above](#when-the-idea-already-has-a-ticket), invoke it with the
+idea plus one override:**
+
+```
+The ticket for this already exists: <ticket-key>. Skip your ticket-filing step entirely —
+file nothing, update nothing, and invoke no ticket-creation skill. Use that key for the
+branch name, the commits and the PR title.
+
+Only the ticket is reused: cut a new branch off the base branch and open a new PR, just as
+you would on a fresh run. If your branch step refuses because a branch for that key already
+exists, stop and report the name it collided with — do not retry with a different suffix.
+
+Read the ticket first if your tracker tooling gives you a way to; it may carry detail the
+idea text leaves out. If it does not, work from the idea text as given — do not add tooling
+to go and fetch it, and do not stop over it.
+
+Everything else in your skill stands unchanged: branch, explore, implement, test, push,
+open the PR, and record your assumptions in the PR body as usual.
+```
+
+Two reasons that override lives here and not in the project's skill. "The ticket already exists"
+is a property of this invocation rather than of the project — the project skill keeps filing
+tickets for every other caller. And the read is written as optional on purpose: a ticket-filing
+skill can usually create and update by key without having any command that hands back a ticket's
+text, and a required read would turn an unattended run into a stop over something the input
+already told you.
+
 Follow it to its end, including its own stop conditions: if it stops, this skill stops too, at
 the same place and for the same reason. Report what it reported and do not start Step 2.
 
 Carry forward exactly four things: **the PR URL, the PR number, the ticket key, the branch name.**
 Nothing else from this step crosses into Step 3 — see [Why the subagents start
 clean](#why-the-subagents-start-clean).
+
+On a supplied-ticket run the key is the one you passed in. If the skill reports a *different* key,
+it filed one anyway despite the override: keep using your own key and name the stray ticket in
+Step 5 so the developer can close it.
 
 The URL and the number are both kept because they are used differently. Step 2 runs here, inside
 the checkout, where `gh` reads the owner and repo off `origin` — a bare number is all it needs and
@@ -250,7 +332,8 @@ Print, in this order. **Every count comes from Step 3b/4b, not from what a subag
 the two disagreed, give the verified number and note the discrepancy:
 
 1. The PR URL.
-2. The ticket URL, and the branch name.
+2. The ticket URL, and the branch name — say whether this run filed the ticket or reused one the
+   input named.
 3. Step 4b's test result, and Step 2's verdict line verbatim.
 4. **Review outcome** — findings raised, fixed, rejected as wrong, noted as opinion. One line
    each, naming the file. Commit shas from `commits_since`.
@@ -287,12 +370,18 @@ Stop, say plainly what happened and what you'd need, and leave the repo where it
 
 - **Either dependency is missing** — `pr-review-inline` is not installed, or no ticket-to-PR
   skill could be identified. Name what is missing and stop before filing anything.
+- **The input says the idea is already filed but names no ticket key.** Say that the key is what
+  is missing and that a re-run with it pasted in is all it takes. Nothing has been filed, branched
+  or pushed at this point.
 - **Step 0 says `CAP_REACHED`.** This branch has already had its one fix round. Report the PR
   URL, the response commits and any unanswered comments, and change nothing.
 - **Step 0 says `CAP_UNCHECKED` or `TOOLING_MISSING`.** The round cap can't be enforced, and an
   unenforced cap is how a branch collects three rounds of unattended commits.
 - **Step 1 hits any of its own stop conditions.** Its reasons are the right ones; don't work
   around them. If the ticket already exists, give its key — the ticket stays, it isn't wasted.
+  A branch for a supplied ticket's key already existing is one of these: name the branch and let
+  the developer choose between [resuming it and leaving it
+  alone](#a-reused-ticket-may-already-have-a-branch).
 - **Step 3b finds no comments on the PR** but Step 3 reported findings. The review didn't land.
 - **Step 4 reports the wrong branch checked out.** Something moved the working tree mid-run.
   Nothing is committed; the review comments are already on the PR for the developer.

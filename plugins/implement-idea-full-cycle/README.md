@@ -47,6 +47,26 @@ With no `--implement-with`, it looks for a project skill whose description cover
 the ticket-to-PR round trip, and **stops rather than guessing** if there is more
 than one candidate or none. Guessing wrong means filing a ticket in a real tracker.
 
+## Already have a ticket?
+
+Say so and it files nothing — it reuses the key for the branch, the commits and the
+PR, and tells the project skill to skip its ticket step:
+
+```
+/implement-idea-full-cycle:idea-to-reviewed-pr --ticket PROJ-1234
+   Make the nightly cleanup job log one summary per run instead of a line per row
+```
+
+A key or a tracker URL in the idea text works the same way, as does prose like
+"this is filed as PROJ-1234". If the input says a ticket exists but never names
+one, it stops and asks for the key rather than filing a duplicate.
+
+**Only the ticket is reused** — the branch, the commits and the PR are new, off
+your base branch, same as any other run. If the ticket already has a branch from
+earlier work, your project skill's branch step refuses and the run stops with the
+colliding name: resume that branch by checking it out and re-running, or leave it
+alone. It will not quietly open a second PR against one ticket.
+
 `gh` must be authenticated (`gh auth status`), and `git` on `PATH`.
 
 ## The two skills
@@ -66,7 +86,7 @@ with.
 | Step | What happens |
 | --- | --- |
 | 0 | `pr_state.py` — is this a fresh run or a resume? |
-| 1 | your project skill: ticket, branch, implementation, tests, PR |
+| 1 | your project skill: ticket (unless one was supplied), branch, implementation, tests, PR |
 | 2 | `wait_for_reviewers.py` — up to 9 min for Sonar/CI/Dependabot to post |
 | 3 | fresh subagent runs `pr-review-inline:review`, posts inline findings |
 | 3b | `pr_state.py` — did the review actually land? |
