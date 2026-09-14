@@ -49,23 +49,18 @@ than one candidate or none. Guessing wrong means filing a ticket in a real track
 
 ## Already have a ticket?
 
-Say so and it files nothing — it reuses the key for the branch, the commits and the
-PR, and tells the project skill to skip its ticket step:
+Paste the key or the tracker URL into the idea and the plugin passes it straight
+through:
 
 ```
-/implement-idea-full-cycle:idea-to-reviewed-pr --ticket PROJ-1234
-   Make the nightly cleanup job log one summary per run instead of a line per row
+/implement-idea-full-cycle:idea-to-reviewed-pr
+   Add an e2e test for the logic in https://your-tracker/browse/PROJ-1234
 ```
 
-A key or a tracker URL in the idea text works the same way, as does prose like
-"this is filed as PROJ-1234". If the input says a ticket exists but never names
-one, it stops and asks for the key rather than filing a duplicate.
-
-**Only the ticket is reused** — the branch, the commits and the PR are new, off
-your base branch, same as any other run. If the ticket already has a branch from
-earlier work, your project skill's branch step refuses and the run stops with the
-colliding name: resume that branch by checking it out and re-running, or leave it
-alone. It will not quietly open a second PR against one ticket.
+Whether that reuses the ticket or files a new one is **your project skill's
+call, not the plugin's** — it owns the tracker. So if a run files a duplicate,
+that's the skill named by `--implement-with` to fix, and the fix holds for
+everything else that invokes it too.
 
 `gh` must be authenticated (`gh auth status`), and `git` on `PATH`.
 
