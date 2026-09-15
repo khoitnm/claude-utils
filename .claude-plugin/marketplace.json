@@ -14,6 +14,11 @@
       "name": "implement-idea-full-cycle",
       "source": "./plugins/implement-idea-full-cycle",
       "description": "Unattended idea-to-reviewed-PR cycle — delegates the ticket and implementation to a project skill, then reviews and fixes in two fresh contexts, verifying both against git instead of trusting their reports"
+    },
+    {
+      "name": "explain",
+      "source": "./plugins/explain",
+      "description": "Explains one thing so a junior developer can follow it — summary, then context, concepts, challenges, solutions, and trade-offs at one to three sentences each, in plain language with every abbreviation spelled out"
     }
   ]
 }

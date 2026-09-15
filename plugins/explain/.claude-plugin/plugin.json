@@ -1,0 +1,17 @@
+{
+  "name": "explain",
+  "version": "1.0.0",
+  "description": "Explains a topic in a few sentences per point, so a junior developer can follow it: a short summary, then context, concepts, challenges, solutions, and trade-offs — plain language, every abbreviation spelled out the first time it appears.",
+  "author": {
+    "name": "Khoi (Kevin) Tran"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "explain",
+    "concise",
+    "documentation",
+    "onboarding",
+    "plain-language",
+    "teaching"
+  ]
+}
