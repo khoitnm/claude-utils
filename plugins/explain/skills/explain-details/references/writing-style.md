@@ -1,6 +1,6 @@
 # Writing style
 
-The reader is a developer with about a year of experience. They are smart and can read code. They do
+The reader is a developer with about a year of experience. They do
 not know this system, and they do not know the team's shorthand.
 
 ## Brevity

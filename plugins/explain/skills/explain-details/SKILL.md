@@ -1,10 +1,10 @@
 ---
-name: explain-concise
-description: Explain a topic briefly so a junior developer can follow it — a short summary, then context, concepts, challenges, solutions, and pros and cons, at one to three sentences each. Use when asked to explain, walk through, break down, teach, or clarify some code, a design, a bug, a pull request, an error, or a technical term.
+name: explain-details
+description: Explain a topic briefly so a junior developer can follow it — a short summary, then context, the main concepts with an example each, challenges, solutions, and pros and cons, at one to three sentences each. Use when asked to explain, walk through, break down, teach, or clarify some code, a design, a bug, a pull request, an error, or a technical term.
 allowed-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, ToolSearch
 ---
 
-# explain-concise
+# explain-details
 
 Explain one thing briefly. The reader is a developer with about a year of experience: they can read
 code, but they have not seen this part of the system and do not know the team's shorthand.
@@ -59,8 +59,9 @@ more, you are explaining too much.
 
 - **Context** — where this sits and why it exists. Add a diagram only when the shape is hard to hold
   in your head; see `references/diagrams.md`, and keep it small.
-- **Concepts** — only the ideas needed to follow the rest. One sentence of definition each, ordered
-  so no concept depends on a later one. Skip what a junior developer already knows.
+- **Concepts** — cover the main ideas the topic is built on, not just unfamiliar words. Give each one
+  a one-sentence definition **and a concrete example**, ordered so no concept depends on a later one.
+  Skip what a junior developer already knows, such as a list or an HTTP request.
 - **Challenges** — the real problems or constraints. Name the problem and what breaks if it is not
   handled. Skip invented ones like "the code had to be maintainable".
 - **Solutions** — how each challenge is handled, in the same order. Name the mechanism, point at the
@@ -70,6 +71,13 @@ more, you are explaining too much.
 
 Skip a section only when it truly does not apply — a vocabulary question has no challenges. Drop the
 heading too; never leave one empty.
+
+### Examples in the Concepts section
+
+The definition and the example together still fit the three-sentence limit. Make the example
+specific — real values, a real call, or a small code snippet. Prefer an example from the code you
+just read over an invented one. When a concept has no everyday equivalent, one short analogy is
+allowed; say where it breaks down.
 
 ## Step 3 — Check the writing
 

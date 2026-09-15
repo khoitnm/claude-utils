@@ -19,10 +19,10 @@ The source must be a path the resolver accepts — `./` or `./some/dir`, not a b
 ## Use
 
 ```
-/explain:explain-concise OrderSyncService
-/explain:explain-concise why does this test fail intermittently
-/explain:explain-concise PR 1482
-/explain:explain-concise what is optimistic locking
+/explain:explain-details OrderSyncService
+/explain:explain-details why does this test fail intermittently
+/explain:explain-details PR 1482
+/explain:explain-details what is optimistic locking
 ```
 
 Typing `/explain` and picking from the completion list works too. The skill also fires on its own
@@ -43,7 +43,7 @@ Two or three sentences: what it is, what job it does, the one fact that matters 
 Where it sits and why it exists. A small diagram when the shape is hard to picture.
 
 ### Concepts
-Only the ideas needed to follow the rest, one sentence of definition each.
+The main ideas it is built on, each with one sentence of definition and a concrete example.
 
 ### Challenges
 The real problems, and what breaks if they are not handled.
@@ -74,7 +74,7 @@ in files that get rendered.
 ```
 plugins/explain/
   .claude-plugin/plugin.json
-  skills/explain-concise/
+  skills/explain-details/
     SKILL.md                      the process and the output structure
     references/writing-style.md   sentence, word, and brevity rules
     references/diagrams.md        when to draw one, and the formats
